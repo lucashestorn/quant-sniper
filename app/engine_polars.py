@@ -612,9 +612,10 @@ def calibrate_symbol_champion(
 
     # Ordena de forma decrescente pelo quant_score determinístico
     candidates.sort(key=lambda x: x["quant_score"], reverse=True)
-    best = candidates[0]
+    top_alts = [dict(c) for c in candidates[:3]]
+    best = dict(candidates[0])
     best["alternatives_count"] = len(candidates)
-    best["top_alternatives"] = candidates[:3]
+    best["top_alternatives"] = top_alts
     return best
 
 
