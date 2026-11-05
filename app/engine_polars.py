@@ -395,9 +395,10 @@ def simulate_strategy_30d(
     strategy: Dict[str, Any],
     timeframe: str,
     min_pf: float = 1.35,
+    lookback_days: int = 30,
 ) -> Optional[Dict[str, Any]]:
     """
-    Executa a simulação Walk-Forward nos candles históricos (30 dias),
+    Executa a simulação Walk-Forward nos candles históricos para a janela `lookback_days` (ex: 30D, 15D, 7D, 1D),
     descontando obrigatoriamente ROUND_TRIP_COST_PCT = 0.11% em cada trade
     e aplicando as Hard Constraints determinísticas.
     """
@@ -406,6 +407,15 @@ def simulate_strategy_30d(
         return None
 
     df_closed = df_enriched.slice(0, df_enriched.height - 1)
+
+    # Se lookback_days for menor que o total do DataFrame, recorta a janela mantendo 55 barras de warmup
+    bars_per_day_map = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "4h": 6}
+    bpd = bars_per_day_map.get(timeframe, 48)
+    target_eval_bars = max(24, int(lookback_days * bpd))
+    total_needed_bars = target_eval_bars + 55
+    if df_closed.height > total_needed_bars:
+        df_closed = df_closed.tail(total_needed_bars)
+
     df_sig = df_closed.with_columns(strategy["expr"].fill_null(False).alias("signal"))
 
     signals = df_sig["signal"].to_numpy()
@@ -423,7 +433,15 @@ def simulate_strategy_30d(
     rr_ratio = float(strategy["rr_ratio"])
     max_bars = int(strategy["max_bars"])
 
-    min_trades_required = 10 if timeframe == "1h" else 12
+    # Escala o número mínimo de trades proporcionalmente à janela escolhida (30D, 15D, 7D, 1D)
+    if lookback_days >= 25:
+        min_trades_required = 8 if timeframe == "1h" else 10
+    elif lookback_days >= 12:
+        min_trades_required = 4 if timeframe == "1h" else 6
+    elif lookback_days >= 5:
+        min_trades_required = 2 if timeframe == "1h" else 3
+    else:
+        min_trades_required = 1
 
     net_returns: List[float] = []
     gross_returns: List[float] = []
@@ -524,7 +542,7 @@ def simulate_strategy_30d(
     # Fórmula de Ranking Determinístico (quant_score)
     quant_score = (
         (net_profit_real / max(max_drawdown_pct, 1.0))
-        * math.log(total_trades)
+        * math.log(max(total_trades, 2))
         * (win_rate_pct / 100.0)
     )
 
@@ -532,6 +550,7 @@ def simulate_strategy_30d(
         "strategy_id": strategy["id"],
         "strategy_name": strategy["name"],
         "timeframe": timeframe,
+        "lookback_days": lookback_days,
         "direction": direction,
         "atr_stop_mult": atr_mult,
         "rr_ratio": rr_ratio,
@@ -553,17 +572,21 @@ def calibrate_symbol_champion(
     ohlcv_by_tf: Dict[str, List[List[float]]],
     min_pf: float = 1.35,
     allowed_directions: Optional[List[str]] = None,
+    lookback_days: int = 30,
+    target_timeframes: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Varre todos os timeframes ('15m', '30m', '1h') e todo o catálogo de estratégias
-    para um ativo, retornando a Estratégia Campeã Absoluta (maior quant_score)
-    que cumpra estritamente todas as travas (incluindo PF >= 1.35).
-    Em modo SPOT, filtra apenas estratégias LONG (allowed_directions=['LONG']).
+    Varre os timeframes selecionados (ex: '15m', '30m', '1h' ou apenas '1h'/'30m')
+    na janela `lookback_days` (ex: 30D, 15D, 7D, 1D) e todo o catálogo de estratégias
+    para um ativo, retornando a Estratégia Campeã Absoluta (maior quant_score).
     """
     candidates: List[Dict[str, Any]] = []
     valid_dirs = {d.upper() for d in allowed_directions} if allowed_directions else {"LONG", "SHORT"}
+    valid_tfs = set(target_timeframes) if target_timeframes else set(ohlcv_by_tf.keys())
 
     for tf, raw_candles in ohlcv_by_tf.items():
+        if tf not in valid_tfs:
+            continue
         if not raw_candles or len(raw_candles) < 65:
             continue
 
@@ -578,6 +601,7 @@ def calibrate_symbol_champion(
                 strategy=strat,
                 timeframe=tf,
                 min_pf=min_pf,
+                lookback_days=lookback_days,
             )
             if res is not None:
                 res["symbol"] = symbol
@@ -588,7 +612,10 @@ def calibrate_symbol_champion(
 
     # Ordena de forma decrescente pelo quant_score determinístico
     candidates.sort(key=lambda x: x["quant_score"], reverse=True)
-    return candidates[0]
+    best = candidates[0]
+    best["alternatives_count"] = len(candidates)
+    best["top_alternatives"] = candidates[:3]
+    return best
 
 
 def evaluate_closed_candle_signal(

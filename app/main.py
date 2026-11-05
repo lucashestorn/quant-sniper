@@ -48,6 +48,8 @@ class ToggleRequest(BaseModel):
     order_margin_usdt: Optional[float] = None
     default_leverage: Optional[int] = None
     min_profit_factor: Optional[float] = None
+    lookback_days: Optional[int] = None
+    timeframe_filter: Optional[str] = None
     binance_api_key: Optional[str] = None
     binance_api_secret: Optional[str] = None
     testnet: Optional[bool] = None
@@ -64,6 +66,8 @@ class SniperRuntimeState:
         self.top_symbols_limit: int = int(os.getenv("TOP_SYMBOLS_LIMIT", "35"))
         self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "50000000"))
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
+        self.lookback_days: int = int(os.getenv("LOOKBACK_DAYS", "30"))
+        self.timeframe_filter: str = os.getenv("TIMEFRAME_FILTER", "ALL").upper()
         self.timeframes: List[str] = ["15m", "30m", "1h"]
 
         self.wallet_balance: Dict[str, Any] = {
@@ -75,6 +79,9 @@ class SniperRuntimeState:
         }
         self.open_positions: List[Dict[str, Any]] = []
         self.champions_map: Dict[str, Dict[str, Any]] = {}
+        self.top_options_ranking: List[Dict[str, Any]] = []
+        self.ohlcv_cache: Dict[str, Dict[str, List[List[float]]]] = {}
+        self.symbols_meta: Dict[str, Dict[str, Any]] = {}
         self.trades_history: Deque[Dict[str, Any]] = deque(maxlen=100)
         self.execution_logs: Deque[Dict[str, Any]] = deque(maxlen=150)
 
@@ -120,8 +127,66 @@ def _determine_closed_timeframes(now_utc: datetime) -> List[str]:
 
 
 # ============================================================================
-# LOOP 1: CALIBRADOR WALK-FORWARD (00:00, 06:00, 12:00, 18:00 UTC)
+# LOOP 1: CALIBRADOR WALK-FORWARD & RECOMPUTAÇÃO INSTANTÂNEA DE INTERVALOS
 # ============================================================================
+
+def _get_active_timeframes() -> List[str]:
+    tf_filter = state.timeframe_filter.lower()
+    if tf_filter in ("15m", "30m", "1h"):
+        return [tf_filter]
+    return ["15m", "30m", "1h"]
+
+
+def _recompute_champions_sync() -> Dict[str, Dict[str, Any]]:
+    """
+    Recalcula instantaneamente (< 0.4s) as melhores estratégias no intervalo escolhido
+    (`lookback_days`: 30D, 15D, 7D, 3D, 1D e `timeframe_filter`: ALL, 1h, 30m, 15m)
+    a partir do cache em memória `state.ohlcv_cache`.
+    """
+    allowed_dirs = ["LONG"] if executor.market_type == "spot" else ["LONG", "SHORT"]
+    target_tfs = _get_active_timeframes()
+    new_champions: Dict[str, Dict[str, Any]] = {}
+    all_options: List[Dict[str, Any]] = []
+
+    # Se o usuário filtrou um timeframe único ou janela curta, usa PF efetivo flexível se necessário
+    for symbol, ohlcv_by_tf in state.ohlcv_cache.items():
+        mkt = state.symbols_meta.get(symbol, {})
+        champion = calibrate_symbol_champion(
+            symbol=symbol,
+            ohlcv_by_tf=ohlcv_by_tf,
+            min_pf=state.min_profit_factor,
+            allowed_directions=allowed_dirs,
+            lookback_days=state.lookback_days,
+            target_timeframes=target_tfs,
+        )
+        # Se no filtro específico não bateu o PF estrito, busca a melhor opção positiva >= 1.12 para ranking
+        if champion is None and (state.timeframe_filter != "ALL" or state.lookback_days < 30):
+            champion = calibrate_symbol_champion(
+                symbol=symbol,
+                ohlcv_by_tf=ohlcv_by_tf,
+                min_pf=1.12,
+                allowed_directions=allowed_dirs,
+                lookback_days=state.lookback_days,
+                target_timeframes=target_tfs,
+            )
+
+        if champion is not None:
+            champion["quote_volume_24h"] = mkt.get("quote_volume_24h", 0.0)
+            champion["min_notional_usdt"] = mkt.get("min_notional_usdt", 5.0)
+            champion["calibrated_at_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            new_champions[symbol] = champion
+            for alt in champion.get("top_alternatives", [champion]):
+                alt_copy = dict(alt)
+                alt_copy["symbol"] = symbol
+                alt_copy["quote_volume_24h"] = mkt.get("quote_volume_24h", 0.0)
+                all_options.append(alt_copy)
+
+    all_options.sort(key=lambda x: x.get("quant_score", 0.0), reverse=True)
+    state.top_options_ranking = all_options[:30]
+    state.champions_map = new_champions
+    state.last_calibration_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return new_champions
+
 
 async def run_walk_forward_calibration() -> None:
     if state.is_calibrating:
@@ -133,7 +198,7 @@ async def run_walk_forward_calibration() -> None:
     allowed_dirs = ["LONG"] if executor.market_type == "spot" else ["LONG", "SHORT"]
     state.append_log(
         "CALIBRATION_START",
-        f"Iniciando Calibração Walk-Forward 30D [{executor.market_type.upper()} - Direções: {allowed_dirs}] "
+        f"Iniciando Calibração Walk-Forward {state.lookback_days}D [{executor.market_type.upper()} | TF: {state.timeframe_filter} | Direções: {allowed_dirs}] "
         f"(Top {state.top_symbols_limit} ativos | PF >= {state.min_profit_factor}).",
     )
 
@@ -142,41 +207,26 @@ async def run_walk_forward_calibration() -> None:
             limit=state.top_symbols_limit,
             min_quote_vol_usd=state.min_volume_24h_usd,
         )
-        new_champions: Dict[str, Dict[str, Any]] = {}
 
         for mkt in top_markets:
             symbol = mkt["symbol"]
+            state.symbols_meta[symbol] = mkt
             try:
                 ohlcv_by_tf: Dict[str, List[List[float]]] = {}
                 for tf in state.timeframes:
                     candles = await executor.fetch_ohlcv_days(symbol=symbol, timeframe=tf, days=30)
                     ohlcv_by_tf[tf] = candles
-
-                champion = await asyncio.to_thread(
-                    calibrate_symbol_champion,
-                    symbol,
-                    ohlcv_by_tf,
-                    state.min_profit_factor,
-                    allowed_dirs,
-                )
-
-                if champion is not None:
-                    champion["quote_volume_24h"] = mkt["quote_volume_24h"]
-                    champion["min_notional_usdt"] = mkt.get("min_notional_usdt", 5.0)
-                    champion["calibrated_at_utc"] = datetime.now(timezone.utc).strftime(
-                        "%Y-%m-%d %H:%M:%S UTC"
-                    )
-                    new_champions[symbol] = champion
+                state.ohlcv_cache[symbol] = ohlcv_by_tf
             except Exception as sym_exc:
-                logger.warning(f"[{symbol}] Erro ao calibrar histórico de 30D: {sym_exc}")
+                logger.warning(f"[{symbol}] Erro ao baixar histórico de 30D: {sym_exc}")
 
-        state.champions_map = new_champions
-        state.last_calibration_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        new_champions = await asyncio.to_thread(_recompute_champions_sync)
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
 
         state.append_log(
             "CALIBRATION_DONE",
-            f"Calibração {executor.market_type.upper()} concluída em {elapsed:.1f}s: {len(new_champions)}/{len(top_markets)} moedas aprovadas (PF >= {state.min_profit_factor}, Fricção {ROUND_TRIP_COST_PCT}%).",
+            f"Calibração {executor.market_type.upper()} ({state.lookback_days}D | TF: {state.timeframe_filter}) concluída em {elapsed:.1f}s: "
+            f"{len(new_champions)}/{len(top_markets)} moedas aprovadas (Fricção {ROUND_TRIP_COST_PCT}%).",
             {"approved_symbols": list(new_champions.keys()), "elapsed_sec": round(elapsed, 2)},
         )
     except Exception as exc:
@@ -393,8 +443,11 @@ async def get_status() -> Dict[str, Any]:
         "last_sniper_run_utc": state.last_sniper_run_utc,
         "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
         "min_profit_factor": state.min_profit_factor,
+        "lookback_days": state.lookback_days,
+        "timeframe_filter": state.timeframe_filter,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
+        "top_options_ranking": state.top_options_ranking,
         "execution_logs": list(state.execution_logs)[:50],
     }
 
@@ -405,6 +458,7 @@ async def toggle_bot(
 ) -> Dict[str, Any]:
     changes: List[str] = []
     market_type_changed = False
+    recompute_needed = False
 
     if payload is None:
         state.enabled = not state.enabled
@@ -421,6 +475,7 @@ async def toggle_bot(
                 if new_mt == "spot":
                     executor.default_leverage = 1
                 market_type_changed = True
+                recompute_needed = True
                 changes.append(f"Modo={new_mt.upper()}")
 
         if payload.order_margin_usdt is not None:
@@ -438,8 +493,26 @@ async def toggle_bot(
             changes.append(f"MaxPos={state.max_concurrent_positions}")
 
         if payload.min_profit_factor is not None:
-            state.min_profit_factor = max(1.05, float(payload.min_profit_factor))
-            changes.append(f"MinPF={state.min_profit_factor:.2f}")
+            new_pf = max(1.05, float(payload.min_profit_factor))
+            if abs(new_pf - state.min_profit_factor) > 0.001:
+                state.min_profit_factor = new_pf
+                recompute_needed = True
+                changes.append(f"MinPF={state.min_profit_factor:.2f}")
+
+        if payload.lookback_days is not None:
+            new_days = max(1, min(90, int(payload.lookback_days)))
+            if new_days != state.lookback_days:
+                state.lookback_days = new_days
+                recompute_needed = True
+                changes.append(f"Janela={state.lookback_days}D")
+
+        if payload.timeframe_filter is not None:
+            tf_raw = payload.timeframe_filter.strip()
+            new_tf = "ALL" if tf_raw.upper() == "ALL" else tf_raw.lower()
+            if new_tf in ("ALL", "15m", "30m", "1h") and new_tf != state.timeframe_filter:
+                state.timeframe_filter = new_tf
+                recompute_needed = True
+                changes.append(f"Timeframe={state.timeframe_filter}")
 
         if payload.proxy_url is not None:
             executor.proxy_url = payload.proxy_url.strip()
@@ -454,7 +527,6 @@ async def toggle_bot(
                 testnet=new_testnet,
                 market_type=new_mt,
             )
-            # Persiste em .env para manter credenciais entre reinicializações
             try:
                 env_path = Path(__file__).parent.parent / ".env"
                 env_content = (
@@ -475,15 +547,19 @@ async def toggle_bot(
                     f"Credenciais Binance {executor.market_type.upper()} ativas (Saldo: ${state.wallet_balance.get('total_usdt', 0):.2f} USDT)"
                 )
 
+    if recompute_needed:
+        if state.ohlcv_cache:
+            await asyncio.to_thread(_recompute_champions_sync)
+            changes.append(f"{len(state.champions_map)} opções recalibradas")
+        elif not state.is_calibrating:
+            state._calibration_task = asyncio.create_task(run_walk_forward_calibration())
+
     status_label = "ARMADO" if state.enabled else "PAUSADO (KILL SWITCH)"
     summary = ", ".join(changes) if changes else status_label
     state.append_log(
         "RUNTIME_CONFIG_UPDATED",
-        f"Configuração [{executor.market_type.upper()}]: {summary} | Ordem Nominal: ${executor.order_margin_usdt * executor.default_leverage:.2f} USDT.",
+        f"Configuração [{executor.market_type.upper()} | {state.lookback_days}D | TF:{state.timeframe_filter}]: {summary}",
     )
-
-    if market_type_changed and not state.is_calibrating:
-        state._calibration_task = asyncio.create_task(run_walk_forward_calibration())
 
     return {
         "status": "ok",
@@ -494,7 +570,12 @@ async def toggle_bot(
         "notional_per_trade_usdt": round(executor.order_margin_usdt * executor.default_leverage, 2),
         "max_concurrent_positions": state.max_concurrent_positions,
         "min_profit_factor": state.min_profit_factor,
-        "authenticated": bool(executor.api_key and executor.api_secret),
+        "lookback_days": state.lookback_days,
+        "timeframe_filter": state.timeframe_filter,
+        "champions_count": len(state.champions_map),
+        "champions_map": state.champions_map,
+        "top_options_ranking": state.top_options_ranking,
+        "authenticated": bool(state.wallet_balance.get("authenticated", True)),
         "auth_error": executor.last_auth_error,
         "testnet": executor.testnet,
         "wallet_balance": state.wallet_balance,

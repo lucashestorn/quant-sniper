@@ -289,9 +289,37 @@
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <div class="flex items-center gap-2">
                         <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Ranking de Moedas & Estratégias Campeãs (Walk-Forward 30D)</h3>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                            Melhores Opções & Estratégias no Intervalo (<span id="labelActiveInterval" class="text-amber-300">30D • Auto</span>)
+                        </h3>
                     </div>
-                    <span class="text-[11px] text-slate-400">Fricção 0.11% descontada • Ordenado por Quant Score</span>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="setViewMode('champions')" id="btnViewChampions" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500 text-black transition">
+                            🏆 1 por Moeda
+                        </button>
+                        <button onclick="setViewMode('top_all')" id="btnViewTopAll" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">
+                            🔥 Top 30 Opções
+                        </button>
+                    </div>
+                </div>
+
+                <!-- BARRA DE CONTROLE DE INTERVALO DE TEMPO (JANELA & TIMEFRAME) -->
+                <div class="mb-3 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-[11px] font-semibold text-slate-400 mr-1">Período (Janela):</span>
+                        <button onclick="changeInterval(30, null)" id="pillDays30" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-blue-600 text-white transition">30D</button>
+                        <button onclick="changeInterval(15, null)" id="pillDays15" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15D</button>
+                        <button onclick="changeInterval(7, null)" id="pillDays7" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">7D</button>
+                        <button onclick="changeInterval(3, null)" id="pillDays3" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">3D</button>
+                        <button onclick="changeInterval(1, null)" id="pillDays1" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">24H (1D)</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-[11px] font-semibold text-slate-400 mr-1">Timeframe Vela:</span>
+                        <button onclick="changeInterval(null, 'ALL')" id="pillTfALL" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-emerald-600 text-white transition">TODOS (Auto)</button>
+                        <button onclick="changeInterval(null, '1h')" id="pillTf1h" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">1Hr (1h)</button>
+                        <button onclick="changeInterval(null, '30m')" id="pillTf30m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">30m</button>
+                        <button onclick="changeInterval(null, '15m')" id="pillTf15m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15m</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto max-h-[420px]">
                     <table class="w-full text-left border-collapse text-xs">
@@ -401,6 +429,35 @@
     <script>
         let currentStatus = null;
         let formInitialized = false;
+        let currentViewMode = 'champions'; // 'champions' | 'top_all'
+
+        function setViewMode(mode) {
+            currentViewMode = mode;
+            const bChamp = document.getElementById('btnViewChampions');
+            const bTop = document.getElementById('btnViewTopAll');
+            if (mode === 'champions') {
+                bChamp.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500 text-black transition';
+                bTop.className = 'px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+            } else {
+                bTop.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500 text-black transition';
+                bChamp.className = 'px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+            }
+            if (currentStatus) renderDashboard(currentStatus);
+        }
+
+        async function changeInterval(days, tf) {
+            const payload = {};
+            if (days !== null) payload.lookback_days = days;
+            if (tf !== null) payload.timeframe_filter = tf;
+            const res = await fetch('/api/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
 
         function updatePreviewNotional() {
             const margin = parseFloat(document.getElementById('inputMarginUsdt').value || 0);
@@ -611,14 +668,41 @@
                 }).join('');
             }
 
-            // Render Champions Map
+            // Highlight active interval pills
+            const activeDays = Number(data.lookback_days || 30);
+            const activeTf = String(data.timeframe_filter || 'ALL');
+            document.getElementById('labelActiveInterval').innerText = `${activeDays}D • ${activeTf === 'ALL' ? 'Auto (15m/30m/1h)' : activeTf}`;
+
+            [30, 15, 7, 3, 1].forEach(d => {
+                const el = document.getElementById(`pillDays${d}`);
+                if (!el) return;
+                if (d === activeDays) {
+                    el.className = 'px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-blue-600 text-white shadow transition';
+                } else {
+                    el.className = 'px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+                }
+            });
+
+            ['ALL', '1h', '30m', '15m'].forEach(tf => {
+                const el = document.getElementById(`pillTf${tf}`);
+                if (!el) return;
+                if (tf.toLowerCase() === activeTf.toLowerCase()) {
+                    el.className = 'px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-emerald-600 text-white shadow transition';
+                } else {
+                    el.className = 'px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+                }
+            });
+
+            // Render Champions Map or Top 30 Options
             const champsObj = data.champions_map || {};
-            const champs = Object.values(champsObj).sort((a, b) => Number(b.quant_score || 0) - Number(a.quant_score || 0));
+            const champsList = currentViewMode === 'top_all' && (data.top_options_ranking || []).length > 0
+                ? data.top_options_ranking
+                : Object.values(champsObj).sort((a, b) => Number(b.quant_score || 0) - Number(a.quant_score || 0));
             const tbodyChamps = document.getElementById('tableChampions');
-            if (champs.length === 0) {
-                tbodyChamps.innerHTML = `<tr><td colspan="11" class="py-8 text-center text-slate-500">Calibrando histórico de 30 dias nos 35 ativos mais líquidos...</td></tr>`;
+            if (champsList.length === 0) {
+                tbodyChamps.innerHTML = `<tr><td colspan="11" class="py-8 text-center text-slate-500">${data.is_calibrating ? 'Calibrando histórico nos 35 ativos mais líquidos...' : 'Nenhuma estratégia aprovada neste filtro específico. Tente outro intervalo ou reduza o PF mínimo.'}</td></tr>`;
             } else {
-                tbodyChamps.innerHTML = champs.map((c, i) => {
+                tbodyChamps.innerHTML = champsList.map((c, i) => {
                     const isLong = c.direction === 'LONG';
                     const minNotional = Number(c.min_notional_usdt || 5.0);
                     const compatible = (notional * 1.25) >= minNotional;
