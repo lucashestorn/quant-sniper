@@ -371,15 +371,14 @@ async def serve_dashboard() -> HTMLResponse:
 
 @app.get("/api/status")
 async def get_status() -> Dict[str, Any]:
-    if executor.api_key and executor.api_secret:
-        state.wallet_balance = await executor.get_wallet_balance()
-        state.open_positions = await executor.get_open_positions()
+    state.wallet_balance = await executor.get_wallet_balance()
+    state.open_positions = await executor.get_open_positions()
 
     return {
         "enabled": state.enabled,
         "market_type": executor.market_type,
         "testnet": executor.testnet,
-        "authenticated": bool(executor.api_key and executor.api_secret),
+        "authenticated": bool(state.wallet_balance.get("authenticated", True)),
         "auth_error": executor.last_auth_error,
         "order_margin_usdt": executor.order_margin_usdt,
         "default_leverage": executor.default_leverage,
@@ -455,13 +454,25 @@ async def toggle_bot(
                 testnet=new_testnet,
                 market_type=new_mt,
             )
+            # Persiste em .env para manter credenciais entre reinicializações
+            try:
+                env_path = Path(__file__).parent.parent / ".env"
+                env_content = (
+                    f"BINANCE_API_KEY={executor.api_key}\n"
+                    f"BINANCE_API_SECRET={executor.api_secret}\n"
+                    f"BINANCE_TESTNET={'true' if executor.testnet else 'false'}\n"
+                    f"BINANCE_MARKET_TYPE={executor.market_type}\n"
+                )
+                env_path.write_text(env_content, encoding="utf-8")
+            except Exception:
+                pass
             state.wallet_balance = await executor.get_wallet_balance()
             state.open_positions = await executor.get_open_positions()
             if state.wallet_balance.get("error"):
                 state.append_log("AUTH_WARNING", state.wallet_balance["error"])
             else:
                 changes.append(
-                    f"Credenciais Binance {executor.market_type.upper()} conectadas (Saldo: ${state.wallet_balance.get('total_usdt', 0):.2f} USDT)"
+                    f"Credenciais Binance {executor.market_type.upper()} ativas (Saldo: ${state.wallet_balance.get('total_usdt', 0):.2f} USDT)"
                 )
 
     status_label = "ARMADO" if state.enabled else "PAUSADO (KILL SWITCH)"

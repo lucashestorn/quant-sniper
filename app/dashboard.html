@@ -510,7 +510,7 @@
             document.getElementById('kpiBalanceTotal').innerText = `$${Number(bal.total_usdt || 0).toFixed(2)}`;
             document.getElementById('kpiBalanceFree').innerText = `$${Number(bal.free_usdt || 0).toFixed(2)}`;
             document.getElementById('kpiBalanceUsed').innerText = `$${Number(bal.used_usdt || 0).toFixed(2)}`;
-            document.getElementById('kpiBalanceNote').innerText = data.authenticated ? 'USDT (Sincronizado)' : 'Conecte a API Key';
+            document.getElementById('kpiBalanceNote').innerText = bal.mode_note || (data.authenticated ? 'USDT (Sincronizado)' : 'Conecte a API Key');
 
             // Open Positions KPI
             const openPos = data.open_positions || [];
