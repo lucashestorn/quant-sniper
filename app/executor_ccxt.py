@@ -112,6 +112,8 @@ class BinanceFuturesExecutor:
         self.shadow_mode_active: bool = False
         self.shadow_usdt_free: float = float(os.getenv("INITIAL_SHADOW_USDT", "10.0"))
         self.shadow_positions: Dict[str, Dict[str, Any]] = {}
+        # Rastreamento de Entrada, Stop Loss e Take Profit para posições Reais Spot
+        self.real_spot_brackets: Dict[str, Dict[str, float]] = {}
 
     async def _sync_server_time(self, force: bool = False) -> None:
         """Sincroniza o offset em milissegundos com o relógio oficial da Binance."""
@@ -576,18 +578,48 @@ class BinanceFuturesExecutor:
                 spot_positions: List[Dict[str, Any]] = []
                 for coin, qty in non_zero:
                     raw_pair = f"{coin}USDT"
+                    sym_pair = f"{coin}/USDT"
                     mark_p = prices_map.get(raw_pair, 0.0)
                     notional = qty * mark_p
                     if notional >= 4.0:
+                        bkt = self.real_spot_brackets.get(sym_pair, {})
+                        entry_p = float(bkt.get("entry_price") or mark_p)
+                        stop_p = float(bkt.get("stop_price") or 0.0)
+                        tp_p = float(bkt.get("take_profit_price") or 0.0)
+
+                        # Verifica saída automática TP / SL no Spot Real
+                        if (stop_p > 0 and mark_p <= stop_p) or (tp_p > 0 and mark_p >= tp_p):
+                            try:
+                                logger.info(
+                                    f"[{sym_pair}] [SPOT EXIT] Alvo/Stop atingido (mark={mark_p} | SL={stop_p} | TP={tp_p}). Vendendo a mercado para USDT..."
+                                )
+                                await self._spot_signed_request(
+                                    "POST",
+                                    "/order",
+                                    {
+                                        "symbol": raw_pair,
+                                        "side": "SELL",
+                                        "type": "MARKET",
+                                        "quoteOrderQty": f"{max(5.0, notional * 0.998):.2f}",
+                                    },
+                                )
+                                self.real_spot_brackets.pop(sym_pair, None)
+                                continue
+                            except Exception as sell_err:
+                                logger.warning(f"[{sym_pair}] Aviso ao executar saída Spot: {sell_err}")
+
+                        pnl = (mark_p - entry_p) * qty
                         spot_positions.append(
                             {
-                                "symbol": f"{coin}/USDT",
+                                "symbol": sym_pair,
                                 "side": "SPOT LONG",
                                 "contracts": round(qty, 6),
                                 "notional_usd": round(notional, 2),
-                                "entry_price": mark_p,
+                                "entry_price": round(entry_p, 6),
                                 "mark_price": mark_p,
-                                "unrealized_pnl": 0.0,
+                                "stop_price": stop_p,
+                                "take_profit_price": tp_p,
+                                "unrealized_pnl": round(pnl, 2),
                                 "leverage": 1,
                                 "margin_mode": "spot",
                             }
@@ -664,6 +696,12 @@ class BinanceFuturesExecutor:
                 executed_qty = float(buy_res.get("executedQty") or (notional_usdt / entry_price))
                 cummulative_quote = float(buy_res.get("cummulativeQuoteQty") or notional_usdt)
                 avg_entry = (cummulative_quote / executed_qty) if executed_qty > 0 else entry_price
+
+                self.real_spot_brackets[symbol] = {
+                    "entry_price": float(avg_entry),
+                    "stop_price": float(stop_price),
+                    "take_profit_price": float(take_profit_price),
+                }
 
                 return {
                     "symbol": symbol,

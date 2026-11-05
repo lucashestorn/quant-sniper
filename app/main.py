@@ -66,7 +66,7 @@ class SniperRuntimeState:
         self.top_symbols_limit: int = int(os.getenv("TOP_SYMBOLS_LIMIT", "35"))
         self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "50000000"))
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
-        self.lookback_days: int = int(os.getenv("LOOKBACK_DAYS", "30"))
+        self.lookback_days: int = int(os.getenv("LOOKBACK_DAYS", "15"))
         self.timeframe_filter: str = os.getenv("TIMEFRAME_FILTER", "ALL").upper()
         self.timeframes: List[str] = ["15m", "30m", "1h"]
 
@@ -111,7 +111,7 @@ state = SniperRuntimeState()
 executor = BinanceFuturesExecutor(
     market_type=os.getenv("BINANCE_MARKET_TYPE", "spot"),
     default_leverage=int(os.getenv("DEFAULT_LEVERAGE", "1")),
-    order_margin_usdt=float(os.getenv("ORDER_MARGIN_USDT", "5.5")),
+    order_margin_usdt=float(os.getenv("ORDER_MARGIN_USDT", "5.25")),
 )
 scheduler = AsyncIOScheduler(timezone="UTC")
 
