@@ -74,6 +74,15 @@
     <!-- MAIN CONTENT -->
     <main class="flex-1 max-w-[1600px] w-full mx-auto px-6 py-5 space-y-5">
 
+        <!-- ALERTA DE CONEXÃO / ERRO DE REGIÃO SE HOUVER -->
+        <div id="authErrorBanner" class="hidden p-3.5 rounded-xl bg-rose-950/90 border border-rose-700 text-xs text-rose-200 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-400 shrink-0"></i>
+                <span id="authErrorText"></span>
+            </div>
+            <button onclick="openCredentialsModal()" class="px-3 py-1 rounded bg-rose-800 hover:bg-rose-700 text-white font-bold shrink-0">Revisar Chave / Proxy</button>
+        </div>
+
         <!-- KPI CARDS ROW -->
         <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <!-- Card 1: Saldo da Carteira -->
@@ -342,12 +351,21 @@
             </div>
 
             <div class="space-y-3 text-xs">
-                <div>
-                    <label class="block text-slate-300 font-semibold mb-1">Ambiente da Corretora</label>
-                    <select id="modalTestnet" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-semibold">
-                        <option value="false">🟢 Conta Real (Binance Futures Oficial - Banca $10+)</option>
-                        <option value="true">🟡 Testnet Sandbox (Dinheiro Fictício)</option>
-                    </select>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Tipo de Mercado</label>
+                        <select id="modalMarketType" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-semibold">
+                            <option value="spot">🟢 SPOT (À Vista - Brasil)</option>
+                            <option value="future">⚡ FUTURES (Perpétuos)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Ambiente</label>
+                        <select id="modalTestnet" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-semibold">
+                            <option value="false">🟢 Conta Real (Live)</option>
+                            <option value="true">🟡 Testnet Sandbox</option>
+                        </select>
+                    </div>
                 </div>
                 <div>
                     <label class="block text-slate-300 font-semibold mb-1">Binance API Key</label>
@@ -359,8 +377,13 @@
                     <input type="password" id="modalApiSecret" placeholder="Cole seu API Secret aqui..."
                         class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 mono text-white" />
                 </div>
+                <div>
+                    <label class="block text-slate-400 font-semibold mb-1">Proxy HTTP/SOCKS (Opcional - se a VPS for nos EUA)</label>
+                    <input type="text" id="modalProxyUrl" placeholder="Ex: http://usuario:senha@ip-brasil:porta (deixe vazio se não usar)"
+                        class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 mono text-white text-[11px]" />
+                </div>
                 <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 leading-relaxed">
-                    <strong>Dica de Segurança:</strong> No gerenciamento de API da Binance, restrinja o IP para <code class="px-1 py-0.5 bg-black/40 rounded">2.25.215.205</code> e marque <strong>Habilitar Futuros</strong>.
+                    <strong>Modo Spot Brasil:</strong> No Spot o lote mínimo da Binance é de <code>$5.00 USDT</code> (alavancagem <code>1x</code>). Para banca de <code>$10</code>, use <code>$5.50</code> por trade!
                 </div>
             </div>
 
@@ -390,9 +413,10 @@
         }
 
         function applyPreset10() {
-            document.getElementById('inputMarginUsdt').value = "2.5";
-            document.getElementById('inputLeverage').value = "3";
-            document.getElementById('inputMaxPositions').value = "2";
+            const isSpot = (currentStatus && currentStatus.market_type === 'spot');
+            document.getElementById('inputMarginUsdt').value = isSpot ? "5.5" : "2.5";
+            document.getElementById('inputLeverage').value = isSpot ? "1" : "3";
+            document.getElementById('inputMaxPositions').value = isSpot ? "1" : "2";
             document.getElementById('inputMinPf').value = "1.35";
             updatePreviewNotional();
             saveRuntimeConfig();
@@ -441,13 +465,23 @@
         }
 
         function renderDashboard(data) {
+            const errBanner = document.getElementById('authErrorBanner');
+            const errText = document.getElementById('authErrorText');
+            if (data.auth_error) {
+                errBanner.classList.remove('hidden');
+                errText.innerText = data.auth_error;
+            } else {
+                errBanner.classList.add('hidden');
+            }
+
             // Top Badges
             const badgeEnv = document.getElementById('badgeEnv');
+            const mktLabel = (data.market_type || 'spot').toUpperCase();
             if (data.testnet) {
-                badgeEnv.innerText = 'TESTNET (SANDBOX)';
+                badgeEnv.innerText = `${mktLabel} • TESTNET`;
                 badgeEnv.className = 'text-[11px] mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700 font-bold';
             } else {
-                badgeEnv.innerText = 'CONTA REAL (LIVE)';
+                badgeEnv.innerText = `${mktLabel} • CONTA REAL`;
                 badgeEnv.className = 'text-[11px] mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold';
             }
 
@@ -693,17 +727,22 @@
             const apiKey = document.getElementById('modalApiKey').value.trim();
             const apiSecret = document.getElementById('modalApiSecret').value.trim();
             const testnet = document.getElementById('modalTestnet').value === 'true';
+            const marketType = document.getElementById('modalMarketType').value;
+            const proxyUrl = document.getElementById('modalProxyUrl').value.trim();
             const btn = document.getElementById('btnSaveCreds');
             btn.innerText = 'Conectando...';
             try {
+                const payload = {
+                    binance_api_key: apiKey,
+                    binance_api_secret: apiSecret,
+                    testnet: testnet,
+                    market_type: marketType
+                };
+                if (proxyUrl) payload.proxy_url = proxyUrl;
                 const res = await fetch('/api/toggle', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        binance_api_key: apiKey,
-                        binance_api_secret: apiSecret,
-                        testnet: testnet
-                    })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     closeCredentialsModal();

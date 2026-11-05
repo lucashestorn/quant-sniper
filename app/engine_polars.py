@@ -552,13 +552,16 @@ def calibrate_symbol_champion(
     symbol: str,
     ohlcv_by_tf: Dict[str, List[List[float]]],
     min_pf: float = 1.35,
+    allowed_directions: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Varre todos os timeframes ('15m', '30m', '1h') e todo o catálogo de estratégias
     para um ativo, retornando a Estratégia Campeã Absoluta (maior quant_score)
     que cumpra estritamente todas as travas (incluindo PF >= 1.35).
+    Em modo SPOT, filtra apenas estratégias LONG (allowed_directions=['LONG']).
     """
     candidates: List[Dict[str, Any]] = []
+    valid_dirs = {d.upper() for d in allowed_directions} if allowed_directions else {"LONG", "SHORT"}
 
     for tf, raw_candles in ohlcv_by_tf.items():
         if not raw_candles or len(raw_candles) < 65:
@@ -568,6 +571,8 @@ def calibrate_symbol_champion(
         df_enriched = compute_indicators_polars(df_raw)
 
         for strat in STRATEGIES_CATALOG:
+            if strat["direction"].upper() not in valid_dirs:
+                continue
             res = simulate_strategy_30d(
                 df_enriched=df_enriched,
                 strategy=strat,

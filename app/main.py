@@ -1,7 +1,8 @@
 """
 main.py
 Ponto de entrada do microsserviço "Quant Terminal Sniper" (FastAPI + APScheduler + Polars + CCXT).
-Projetado para execução 24/7 em container Docker no Coolify, com Dashboard Web integrado em GET /.
+Suporta Modo SPOT (padrão para contas Binance Brasil, comprando LONG e posicionando OCO TP/SL)
+e Modo FUTURES.
 """
 
 from __future__ import annotations
@@ -50,16 +51,18 @@ class ToggleRequest(BaseModel):
     binance_api_key: Optional[str] = None
     binance_api_secret: Optional[str] = None
     testnet: Optional[bool] = None
+    market_type: Optional[str] = None
+    proxy_url: Optional[str] = None
 
 
 class SniperRuntimeState:
-    """Estado global em memória do Quant Terminal Sniper (configurado por padrão para banca de $10 USDT)."""
+    """Estado global em memória do Quant Terminal Sniper."""
 
     def __init__(self) -> None:
         self.enabled: bool = os.getenv("BOT_ENABLED", "true").lower() in ("true", "1", "yes")
         self.max_concurrent_positions: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "2"))
         self.top_symbols_limit: int = int(os.getenv("TOP_SYMBOLS_LIMIT", "35"))
-        self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "100000000"))
+        self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "50000000"))
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
         self.timeframes: List[str] = ["15m", "30m", "1h"]
 
@@ -68,6 +71,7 @@ class SniperRuntimeState:
             "free_usdt": 0.0,
             "used_usdt": 0.0,
             "authenticated": False,
+            "error": None,
         }
         self.open_positions: List[Dict[str, Any]] = []
         self.champions_map: Dict[str, Dict[str, Any]] = {}
@@ -98,8 +102,9 @@ class SniperRuntimeState:
 
 state = SniperRuntimeState()
 executor = BinanceFuturesExecutor(
-    default_leverage=int(os.getenv("DEFAULT_LEVERAGE", "3")),
-    order_margin_usdt=float(os.getenv("ORDER_MARGIN_USDT", "2.5")),
+    market_type=os.getenv("BINANCE_MARKET_TYPE", "spot"),
+    default_leverage=int(os.getenv("DEFAULT_LEVERAGE", "1")),
+    order_margin_usdt=float(os.getenv("ORDER_MARGIN_USDT", "5.5")),
 )
 scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -125,9 +130,11 @@ async def run_walk_forward_calibration() -> None:
 
     state.is_calibrating = True
     t0 = datetime.now(timezone.utc)
+    allowed_dirs = ["LONG"] if executor.market_type == "spot" else ["LONG", "SHORT"]
     state.append_log(
         "CALIBRATION_START",
-        f"Iniciando Calibração Walk-Forward 30D (Top {state.top_symbols_limit} ativos > ${state.min_volume_24h_usd:,.0f} Vol 24h | PF >= {state.min_profit_factor}).",
+        f"Iniciando Calibração Walk-Forward 30D [{executor.market_type.upper()} - Direções: {allowed_dirs}] "
+        f"(Top {state.top_symbols_limit} ativos | PF >= {state.min_profit_factor}).",
     )
 
     try:
@@ -150,6 +157,7 @@ async def run_walk_forward_calibration() -> None:
                     symbol,
                     ohlcv_by_tf,
                     state.min_profit_factor,
+                    allowed_dirs,
                 )
 
                 if champion is not None:
@@ -168,7 +176,7 @@ async def run_walk_forward_calibration() -> None:
 
         state.append_log(
             "CALIBRATION_DONE",
-            f"Calibração concluída em {elapsed:.1f}s: {len(new_champions)}/{len(top_markets)} moedas aprovadas (PF >= {state.min_profit_factor}, Fricção {ROUND_TRIP_COST_PCT}%).",
+            f"Calibração {executor.market_type.upper()} concluída em {elapsed:.1f}s: {len(new_champions)}/{len(top_markets)} moedas aprovadas (PF >= {state.min_profit_factor}, Fricção {ROUND_TRIP_COST_PCT}%).",
             {"approved_symbols": list(new_champions.keys()), "elapsed_sec": round(elapsed, 2)},
         )
     except Exception as exc:
@@ -200,14 +208,9 @@ async def run_candle_close_sniper() -> None:
         )
         return
 
-    # 1. Trava Anti-Correlação: consulta posições reais abertas na Binance Futures
-    try:
-        open_positions = await executor.get_open_positions()
-        state.open_positions = open_positions
-        state.wallet_balance = await executor.get_wallet_balance()
-    except Exception as exc:
-        state.append_log("POSITION_CHECK_ERROR", f"Erro ao consultar posições abertas: {exc}")
-        return
+    open_positions = await executor.get_open_positions()
+    state.open_positions = open_positions
+    state.wallet_balance = await executor.get_wallet_balance()
 
     open_symbols = {pos["symbol"] for pos in open_positions}
     available_slots = max(0, state.max_concurrent_positions - len(open_positions))
@@ -222,7 +225,6 @@ async def run_candle_close_sniper() -> None:
 
     current_notional = executor.order_margin_usdt * executor.default_leverage
 
-    # 2. Filtra moedas do timeframe que fechou e cujo lote mínimo é compatível com a mão configurada
     eligible_targets = [
         (sym, champ)
         for sym, champ in state.champions_map.items()
@@ -234,7 +236,6 @@ async def run_candle_close_sniper() -> None:
     if not eligible_targets:
         return
 
-    # 3. Avalia em paralelo o sinal na vela fechada [-2] (No-Repainting)
     async def _check_symbol(sym: str, champ: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         tf = champ["timeframe"]
         try:
@@ -254,13 +255,12 @@ async def run_candle_close_sniper() -> None:
     if not approved_signals:
         state.append_log(
             "SNIPER_SCAN_COMPLETE",
-            f"Varredura {closed_tfs} concluída em {len(eligible_targets)} ativos compatíveis: nenhum gatilho na vela fechada [-2].",
+            f"Varredura {closed_tfs} ({executor.market_type.upper()}) concluída em {len(eligible_targets)} ativos: nenhum gatilho na vela fechada [-2].",
         )
         return
 
     approved_signals.sort(key=lambda x: x.get("quant_score", 0.0), reverse=True)
 
-    # 4. Dispara Ordens Atômicas respeitando as vagas disponíveis
     for sig in approved_signals[:available_slots]:
         sym = sig["symbol"]
         tf = sig["timeframe"]
@@ -296,7 +296,7 @@ async def run_candle_close_sniper() -> None:
             state.append_log(
                 "ATOMIC_ORDER_FIRED",
                 (
-                    f"ORDEM ATÔMICA DISPARADA: {sym} [{tf}] {sig['direction']} "
+                    f"ORDEM {executor.market_type.upper()} DISPARADA: {sym} [{tf}] {sig['direction']} "
                     f"(${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | "
                     f"SL: {order_receipt['stop_price']} | TP: {order_receipt['take_profit_price']}"
                 ),
@@ -309,11 +309,8 @@ async def run_candle_close_sniper() -> None:
                 {"signal": sig},
             )
 
-    try:
-        state.open_positions = await executor.get_open_positions()
-        state.wallet_balance = await executor.get_wallet_balance()
-    except Exception:
-        pass
+    state.open_positions = await executor.get_open_positions()
+    state.wallet_balance = await executor.get_wallet_balance()
 
 
 # ============================================================================
@@ -345,7 +342,7 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     state.append_log(
         "SYSTEM_STARTUP",
-        f"APScheduler iniciado | Perfil Padrão: Margem ${executor.order_margin_usdt:.2f} × {executor.default_leverage}x (${executor.order_margin_usdt * executor.default_leverage:.2f}/trade) | Max Posições: {state.max_concurrent_positions}.",
+        f"APScheduler iniciado [{executor.market_type.upper()}] | Valor por Trade: ${executor.order_margin_usdt:.2f} USDT | Max Posições: {state.max_concurrent_positions}.",
     )
 
     if os.getenv("AUTO_CALIBRATE_ON_STARTUP", "true").lower() in ("true", "1", "yes"):
@@ -359,15 +356,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Quant Terminal Sniper Microservice",
-    description="Microsserviço 24/7 de calibração Walk-Forward em Polars e execução atômica na Binance Futures via CCXT.",
-    version="1.1.0",
+    description="Microsserviço 24/7 de calibração Walk-Forward em Polars e execução atômica Spot/Futures na Binance via CCXT.",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard() -> HTMLResponse:
-    """Renderiza o Painel Web de Controle & Monitoramento do Quant Terminal Sniper."""
     if DASHBOARD_HTML_PATH.exists():
         return HTMLResponse(content=DASHBOARD_HTML_PATH.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Quant Terminal Sniper Running</h1>")
@@ -375,18 +371,16 @@ async def serve_dashboard() -> HTMLResponse:
 
 @app.get("/api/status")
 async def get_status() -> Dict[str, Any]:
-    """Retorna o estado operacional completo do robô, saldo da carteira, posições e histórico."""
     if executor.api_key and executor.api_secret:
-        try:
-            state.open_positions = await executor.get_open_positions()
-            state.wallet_balance = await executor.get_wallet_balance()
-        except Exception:
-            pass
+        state.wallet_balance = await executor.get_wallet_balance()
+        state.open_positions = await executor.get_open_positions()
 
     return {
         "enabled": state.enabled,
+        "market_type": executor.market_type,
         "testnet": executor.testnet,
         "authenticated": bool(executor.api_key and executor.api_secret),
+        "auth_error": executor.last_auth_error,
         "order_margin_usdt": executor.order_margin_usdt,
         "default_leverage": executor.default_leverage,
         "notional_per_trade_usdt": round(executor.order_margin_usdt * executor.default_leverage, 2),
@@ -410,16 +404,8 @@ async def get_status() -> Dict[str, Any]:
 async def toggle_bot(
     payload: Optional[ToggleRequest] = Body(default=None),
 ) -> Dict[str, Any]:
-    """
-    Kill Switch e atualização em tempo de execução (sem reiniciar o container):
-    - `enabled`: liga/pausa o robô
-    - `order_margin_usdt`: altera a margem em dólares por operação (ex: $2.50)
-    - `default_leverage`: altera a alavancagem isolada (ex: 3x)
-    - `max_concurrent_positions`: altera o limite de posições simultâneas (ex: 2)
-    - `min_profit_factor`: altera o Profit Factor mínimo de filtro
-    - `binance_api_key` / `binance_api_secret` / `testnet`: atualiza credenciais em tempo real
-    """
     changes: List[str] = []
+    market_type_changed = False
 
     if payload is None:
         state.enabled = not state.enabled
@@ -429,12 +415,23 @@ async def toggle_bot(
             state.enabled = bool(payload.enabled)
             changes.append(f"enabled={state.enabled}")
 
+        if payload.market_type is not None and payload.market_type.lower() in ("spot", "future"):
+            new_mt = payload.market_type.lower()
+            if new_mt != executor.market_type:
+                executor.market_type = new_mt
+                if new_mt == "spot":
+                    executor.default_leverage = 1
+                market_type_changed = True
+                changes.append(f"Modo={new_mt.upper()}")
+
         if payload.order_margin_usdt is not None:
             executor.order_margin_usdt = max(1.0, float(payload.order_margin_usdt))
             changes.append(f"Margem=${executor.order_margin_usdt:.2f}")
 
         if payload.default_leverage is not None:
-            executor.default_leverage = max(1, min(50, int(payload.default_leverage)))
+            executor.default_leverage = (
+                1 if executor.market_type == "spot" else max(1, min(50, int(payload.default_leverage)))
+            )
             changes.append(f"Alavancagem={executor.default_leverage}x")
 
         if payload.max_concurrent_positions is not None:
@@ -445,35 +442,49 @@ async def toggle_bot(
             state.min_profit_factor = max(1.05, float(payload.min_profit_factor))
             changes.append(f"MinPF={state.min_profit_factor:.2f}")
 
+        if payload.proxy_url is not None:
+            executor.proxy_url = payload.proxy_url.strip()
+            changes.append("Proxy atualizado")
+
         if payload.binance_api_key is not None and payload.binance_api_secret is not None:
             new_testnet = payload.testnet if payload.testnet is not None else executor.testnet
+            new_mt = payload.market_type.lower() if payload.market_type else executor.market_type
             await executor.update_credentials(
                 api_key=payload.binance_api_key,
                 api_secret=payload.binance_api_secret,
                 testnet=new_testnet,
+                market_type=new_mt,
             )
             state.wallet_balance = await executor.get_wallet_balance()
             state.open_positions = await executor.get_open_positions()
-            changes.append(
-                f"Credenciais Binance atualizadas ({'TESTNET' if new_testnet else 'CONTA REAL'})"
-            )
+            if state.wallet_balance.get("error"):
+                state.append_log("AUTH_WARNING", state.wallet_balance["error"])
+            else:
+                changes.append(
+                    f"Credenciais Binance {executor.market_type.upper()} conectadas (Saldo: ${state.wallet_balance.get('total_usdt', 0):.2f} USDT)"
+                )
 
     status_label = "ARMADO" if state.enabled else "PAUSADO (KILL SWITCH)"
     summary = ", ".join(changes) if changes else status_label
     state.append_log(
         "RUNTIME_CONFIG_UPDATED",
-        f"Configuração atualizada em tempo real: {summary} | Mão Nominal: ${executor.order_margin_usdt * executor.default_leverage:.2f} USDT.",
+        f"Configuração [{executor.market_type.upper()}]: {summary} | Ordem Nominal: ${executor.order_margin_usdt * executor.default_leverage:.2f} USDT.",
     )
+
+    if market_type_changed and not state.is_calibrating:
+        state._calibration_task = asyncio.create_task(run_walk_forward_calibration())
 
     return {
         "status": "ok",
         "enabled": state.enabled,
+        "market_type": executor.market_type,
         "order_margin_usdt": executor.order_margin_usdt,
         "default_leverage": executor.default_leverage,
         "notional_per_trade_usdt": round(executor.order_margin_usdt * executor.default_leverage, 2),
         "max_concurrent_positions": state.max_concurrent_positions,
         "min_profit_factor": state.min_profit_factor,
         "authenticated": bool(executor.api_key and executor.api_secret),
+        "auth_error": executor.last_auth_error,
         "testnet": executor.testnet,
         "wallet_balance": state.wallet_balance,
     }
@@ -481,7 +492,6 @@ async def toggle_bot(
 
 @app.post("/api/calibrate")
 async def trigger_calibration() -> Dict[str, Any]:
-    """Aciona manualmente uma recalibração Walk-Forward de 30 dias em background."""
     if state.is_calibrating:
         return {"status": "busy", "message": "Calibração Walk-Forward já está em execução."}
 
