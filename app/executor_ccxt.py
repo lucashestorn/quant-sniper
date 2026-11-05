@@ -4,7 +4,8 @@ Conector Assíncrono com a Binance Futures (USDⓈ-M) via CCXT.
 Implementa:
 - Seleção das Top 35 moedas perpétuas com Volume 24h > $100M.
 - Download paginado de 30 dias de candles (15m, 30m, 1h).
-- Consulta de posições abertas em tempo real (Trava Anti-Correlação).
+- Consulta de Saldo da Carteira Futuros (Total, Livre, Em Uso) e Posições Abertas (Trava Anti-Correlação).
+- Validação de Min Notional (compatível com banca de $10 USDT -> ex: $2.50 margem x 3x = $7.50 notional).
 - Disparo de Ordem Atômica: Market (Isolado, Alavancado) + STOP_MARKET + TAKE_PROFIT_MARKET
   com reduceOnly=True e workingType='MARK_PRICE' (com rollback de emergência caso SL/TP falhe).
 """
@@ -41,7 +42,7 @@ class BinanceFuturesExecutor:
         api_secret: Optional[str] = None,
         testnet: Optional[bool] = None,
         default_leverage: int = 3,
-        order_margin_usdt: float = 50.0,
+        order_margin_usdt: float = 2.5,
     ) -> None:
         self.api_key = (api_key if api_key is not None else os.getenv("BINANCE_API_KEY", "")).strip()
         self.api_secret = (
@@ -58,7 +59,7 @@ class BinanceFuturesExecutor:
 
         self.exchange: Optional[ccxt.binanceusdm] = None
         self._markets_loaded: bool = False
-        self._sem = asyncio.Semaphore(8)  # Limita concorrência de chamadas REST para evitar HTTP 429
+        self._sem = asyncio.Semaphore(8)
 
     async def initialize(self) -> None:
         """Inicializa a sessão assíncrona do CCXT e carrega os mercados da Binance Futures."""
@@ -84,15 +85,37 @@ class BinanceFuturesExecutor:
             await self.exchange.load_markets()
             self._markets_loaded = True
             mode_label = "TESTNET (Sandbox)" if self.testnet else "LIVE (Produção)"
-            auth_label = "AUTENTICADO" if (self.api_key and self.api_secret) else "SOMENTE LEITURA (Sem API Key)"
+            auth_label = (
+                "AUTENTICADO"
+                if (self.api_key and self.api_secret)
+                else "SOMENTE LEITURA (Sem API Key)"
+            )
             logger.info(f"Conector CCXT Binance Futures inicializado [{mode_label} | {auth_label}]")
         except Exception as exc:
-            logger.warning(f"Aviso ao carregar mercados no startup ({exc}). Tentará novamente sob demanda.")
+            logger.warning(
+                f"Aviso ao carregar mercados no startup ({exc}). Tentará novamente sob demanda."
+            )
+
+    async def update_credentials(
+        self,
+        api_key: str,
+        api_secret: str,
+        testnet: bool,
+    ) -> None:
+        """Permite atualizar API Key, Secret e modo Testnet/Live em tempo de execução sem reiniciar o container."""
+        await self.close()
+        self.api_key = api_key.strip()
+        self.api_secret = api_secret.strip()
+        self.testnet = bool(testnet)
+        await self.initialize()
 
     async def close(self) -> None:
         """Encerra a sessão HTTP assíncrona do CCXT."""
         if self.exchange is not None:
-            await self.exchange.close()
+            try:
+                await self.exchange.close()
+            except Exception:
+                pass
             self.exchange = None
             self._markets_loaded = False
 
@@ -102,6 +125,60 @@ class BinanceFuturesExecutor:
         if self.exchange is not None and not self._markets_loaded:
             await self.exchange.load_markets()
             self._markets_loaded = True
+
+    def get_symbol_min_notional(self, symbol: str, ref_price: float = 0.0) -> float:
+        """
+        Retorna o valor nominal mínimo (Min Notional em USDT) exigido pela Binance Futures para o ativo.
+        """
+        if not self.exchange or not self._markets_loaded or symbol not in self.exchange.markets:
+            return 5.0
+
+        mkt = self.exchange.markets[symbol]
+        limits = mkt.get("limits") or {}
+        cost_min = float((limits.get("cost") or {}).get("min") or 5.0)
+        amount_min = float((limits.get("amount") or {}).get("min") or 0.0)
+
+        if ref_price > 0 and amount_min > 0:
+            cost_from_amount = amount_min * ref_price
+            return round(max(cost_min, cost_from_amount), 2)
+        return round(cost_min, 2)
+
+    async def get_wallet_balance(self) -> Dict[str, Any]:
+        """
+        Consulta o saldo em tempo real da carteira de Futuros USDⓈ-M (Total, Livre, Em Uso).
+        """
+        await self._ensure_markets()
+        assert self.exchange is not None
+
+        if not (self.api_key and self.api_secret):
+            return {
+                "total_usdt": 0.0,
+                "free_usdt": 0.0,
+                "used_usdt": 0.0,
+                "authenticated": False,
+            }
+
+        try:
+            bal = await self.exchange.fetch_balance()
+            usdt_info = bal.get("USDT") or {}
+            total_val = float(usdt_info.get("total") or 0.0)
+            free_val = float(usdt_info.get("free") or 0.0)
+            used_val = float(usdt_info.get("used") or 0.0)
+            return {
+                "total_usdt": round(total_val, 2),
+                "free_usdt": round(free_val, 2),
+                "used_usdt": round(used_val, 2),
+                "authenticated": True,
+            }
+        except Exception as exc:
+            logger.warning(f"Erro ao consultar saldo da carteira USDT: {exc}")
+            return {
+                "total_usdt": 0.0,
+                "free_usdt": 0.0,
+                "used_usdt": 0.0,
+                "authenticated": True,
+                "error": str(exc),
+            }
 
     async def fetch_top_liquid_symbols(
         self,
@@ -119,7 +196,6 @@ class BinanceFuturesExecutor:
         eligible: List[Dict[str, Any]] = []
 
         for sym, mkt in self.exchange.markets.items():
-            # Filtra estritamente contratos perpétuos lineares cotados em USDT
             if not (
                 mkt.get("swap")
                 and mkt.get("linear")
@@ -141,21 +217,27 @@ class BinanceFuturesExecutor:
                         "id": mkt.get("id", sym),
                         "quote_volume_24h": round(quote_vol, 2),
                         "last_price": last_price,
+                        "min_notional_usdt": self.get_symbol_min_notional(sym, last_price),
                     }
                 )
 
-        # Em ambiente Testnet o volume reportado nos tickers pode ser menor que $100M;
-        # caso retorne vazio no Testnet, ordena pelos maiores volumes disponíveis.
         if not eligible and self.testnet:
             for sym, mkt in self.exchange.markets.items():
-                if mkt.get("swap") and mkt.get("linear") and mkt.get("quote") == "USDT" and mkt.get("active", True):
+                if (
+                    mkt.get("swap")
+                    and mkt.get("linear")
+                    and mkt.get("quote") == "USDT"
+                    and mkt.get("active", True)
+                ):
                     ticker = tickers.get(sym) or {}
+                    last_price = float(ticker.get("last") or 0.0)
                     eligible.append(
                         {
                             "symbol": sym,
                             "id": mkt.get("id", sym),
                             "quote_volume_24h": float(ticker.get("quoteVolume") or 0.0),
-                            "last_price": float(ticker.get("last") or 0.0),
+                            "last_price": last_price,
+                            "min_notional_usdt": self.get_symbol_min_notional(sym, last_price),
                         }
                     )
 
@@ -169,8 +251,7 @@ class BinanceFuturesExecutor:
         days: int = 30,
     ) -> List[List[float]]:
         """
-        Baixa o histórico completo dos últimos `days` dias de candles para um par e timeframe,
-        paginando chamadas assíncronas com semáforo de rate-limit.
+        Baixa o histórico completo dos últimos `days` dias de candles para um par e timeframe.
         """
         await self._ensure_markets()
         assert self.exchange is not None
@@ -212,9 +293,7 @@ class BinanceFuturesExecutor:
         timeframe: str,
         limit: int = 120,
     ) -> List[List[float]]:
-        """
-        Busca rápida das últimas `limit` velas para avaliação instantânea no Sniper de Fechamento.
-        """
+        """Busca rápida das últimas `limit` velas para avaliação instantânea no Sniper de Fechamento."""
         await self._ensure_markets()
         assert self.exchange is not None
 
@@ -225,7 +304,6 @@ class BinanceFuturesExecutor:
         """
         Regra de Ouro #4 (Trava Anti-Correlação):
         Consulta as posições abertas na Binance Futures em tempo real.
-        Retorna apenas posições com exposição ativa (`contracts > 0`).
         """
         await self._ensure_markets()
         assert self.exchange is not None
@@ -250,6 +328,7 @@ class BinanceFuturesExecutor:
                     "entry_price": float(pos.get("entryPrice") or 0.0),
                     "mark_price": float(pos.get("markPrice") or 0.0),
                     "unrealized_pnl": round(float(pos.get("unrealizedPnl") or 0.0), 2),
+                    "percentage": round(float(pos.get("percentage") or 0.0), 2),
                     "leverage": int(pos.get("leverage") or self.default_leverage),
                     "margin_mode": pos.get("marginMode") or "isolated",
                 }
@@ -258,16 +337,13 @@ class BinanceFuturesExecutor:
         return active_positions
 
     async def configure_isolated_and_leverage(self, symbol: str, leverage: int) -> None:
-        """
-        Configura modo de margem ISOLATED e alavancagem para o par antes do envio da ordem.
-        """
+        """Configura modo de margem ISOLATED e alavancagem para o par antes do envio da ordem."""
         await self._ensure_markets()
         assert self.exchange is not None
 
         try:
             await self.exchange.set_margin_mode("isolated", symbol)
         except Exception as exc:
-            # A Binance retorna erro benigno (-4046) quando o ativo já está em modo ISOLATED
             if "-4046" not in str(exc) and "No need to change margin type" not in str(exc):
                 logger.debug(f"[{symbol}] Aviso ao ajustar margem isolada: {exc}")
 
@@ -288,19 +364,30 @@ class BinanceFuturesExecutor:
     ) -> Dict[str, Any]:
         """
         Regra de Ouro #3: Ordem Atômica na Corretora.
-        Envia sequencialmente:
+        Envia:
         1. Ordem principal a mercado (`market`) em modo `isolated` com alavancagem configurada.
         2. Ordem de Stop Loss (`STOP_MARKET`) com `reduceOnly=True` e `workingType='MARK_PRICE'`.
         3. Ordem de Take Profit (`TAKE_PROFIT_MARKET`) com `reduceOnly=True` e `workingType='MARK_PRICE'`.
-        Caso o posicionamento do SL ou TP falhe na corretora, executa fechamento imediato a mercado
-        para jamais deixar uma posição descoberta.
         """
         await self._ensure_markets()
         assert self.exchange is not None
 
-        lev = leverage or self.default_leverage
-        margin = margin_usdt or self.order_margin_usdt
+        lev = int(leverage if leverage is not None else self.default_leverage)
+        margin = float(margin_usdt if margin_usdt is not None else self.order_margin_usdt)
         notional_usdt = margin * lev
+
+        # Verifica compatibilidade com o Min Notional exigido pela Binance Futures para este par
+        min_notional = self.get_symbol_min_notional(symbol, entry_price)
+        if notional_usdt < min_notional:
+            # Se a diferença for pequena (ex: notional $5.0 vs min $5.5), ajusta suavemente;
+            # se exigir muito mais (ex: BTC exige $100), aborta antes de enviar.
+            if min_notional <= notional_usdt * 1.25:
+                notional_usdt = min_notional * 1.02
+            else:
+                raise RuntimeError(
+                    f"[{symbol}] Posição nominal configurada (${notional_usdt:.2f} USDT) é menor que o lote mínimo "
+                    f"exigido pela Binance para este par (${min_notional:.2f} USDT). Ignorando ativo para proteger a banca."
+                )
 
         is_long = direction.upper() == "LONG"
         entry_side = "buy" if is_long else "sell"
@@ -315,9 +402,14 @@ class BinanceFuturesExecutor:
         stop_float = float(stop_str)
         tp_float = float(tp_str)
 
+        if amount_float <= 0:
+            raise RuntimeError(
+                f"[{symbol}] Quantidade calculada ({raw_amount:.6f}) arredondou para zero na precisão do ativo."
+            )
+
         if not (self.api_key and self.api_secret):
             raise RuntimeError(
-                f"[{symbol}] Credenciais BINANCE_API_KEY / BINANCE_API_SECRET não configuradas para envio de ordem real."
+                f"[{symbol}] Credenciais BINANCE_API_KEY / BINANCE_API_SECRET não configuradas (Modo Observação)."
             )
 
         # 1. Configura Margem Isolada + Alavancagem
@@ -326,7 +418,7 @@ class BinanceFuturesExecutor:
         # 2. Dispara Ordem Principal a Mercado
         logger.info(
             f"[{symbol}] Disparando entrada {direction} MARKET | Qtd: {amount_float} | "
-            f"Alavancagem: {lev}x (Isolado) | SL: {stop_float} | TP: {tp_float}"
+            f"Notional: ${notional_usdt:.2f} (Margem ${margin:.2f} x {lev}x Isolado) | SL: {stop_float} | TP: {tp_float}"
         )
         main_order = await self.exchange.create_order(
             symbol=symbol,
@@ -392,12 +484,14 @@ class BinanceFuturesExecutor:
             "symbol": symbol,
             "direction": direction.upper(),
             "leverage": lev,
+            "margin_usdt": round(margin, 2),
             "margin_mode": "isolated",
             "amount": amount_float,
             "notional_usdt": round(notional_usdt, 2),
             "entry_order_id": main_order.get("id"),
             "stop_order_id": sl_order.get("id") if sl_order else None,
             "tp_order_id": tp_order.get("id") if tp_order else None,
+            "entry_price": float(main_order.get("average") or entry_price),
             "stop_price": stop_float,
             "take_profit_price": tp_float,
             "working_type": "MARK_PRICE",

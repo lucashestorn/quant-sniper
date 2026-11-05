@@ -10,16 +10,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Credenciais Binance Futures (Configure no painel de variáveis do Coolify)
+      # Credenciais Binance Futures (Configure no painel de variáveis do Coolify ou direto pela UI Web)
       - BINANCE_API_KEY=${BINANCE_API_KEY:-}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
       - BINANCE_TESTNET=${BINANCE_TESTNET:-true}
       
-      # Parâmetros de Risco & Execução Atômica
+      # Parâmetros de Risco & Execução Atômica (Padrão otimizado para Banca de $10 USDT)
       - BOT_ENABLED=${BOT_ENABLED:-true}
-      - MAX_CONCURRENT_POSITIONS=${MAX_CONCURRENT_POSITIONS:-4}
+      - MAX_CONCURRENT_POSITIONS=${MAX_CONCURRENT_POSITIONS:-2}
       - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-3}
-      - ORDER_MARGIN_USDT=${ORDER_MARGIN_USDT:-50.0}
+      - ORDER_MARGIN_USDT=${ORDER_MARGIN_USDT:-2.5}
       - MIN_VOLUME_24H_USD=${MIN_VOLUME_24H_USD:-100000000}
       - TOP_SYMBOLS_LIMIT=${TOP_SYMBOLS_LIMIT:-35}
       - MIN_PROFIT_FACTOR=${MIN_PROFIT_FACTOR:-1.35}
