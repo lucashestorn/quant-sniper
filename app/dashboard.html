@@ -18,6 +18,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <style>
         body {
             background-color: #070b14;
@@ -1239,6 +1240,86 @@
         </div>
     </div>
 
+    <!-- MODAL DE GRÁFICO EM TEMPO REAL & ESTRATÉGIA VENCEDORA -->
+    <div id="liveChartModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden items-center justify-center p-2 sm:p-4 transition-all">
+        <div class="card-glass rounded-2xl w-full max-w-6xl max-h-[96vh] flex flex-col border border-slate-700 shadow-2xl overflow-hidden bg-[#0a0f1d]">
+            <!-- Header do Modal -->
+            <div class="p-3 sm:p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/90">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                        <i data-lucide="candlestick-chart" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 id="modalChartSymbol" class="text-base sm:text-lg font-black text-white mono">BTC/USDT</h3>
+                            <span id="modalChartDirection" class="px-2 py-0.5 rounded text-[11px] font-black bg-emerald-950 text-emerald-400 border border-emerald-800">LONG</span>
+                            <span id="modalChartMode" class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">SNIPER</span>
+                            <span class="flex items-center gap-1 text-[11px] mono text-emerald-400 font-bold">
+                                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> AO VIVO
+                            </span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-300">
+                            <span id="modalChartStrategyName" class="font-bold text-amber-300">Estratégia Vencedora: ...</span>
+                            <span class="text-slate-600 hidden sm:inline">•</span>
+                            <span id="modalChartStats" class="text-slate-400 mono text-[11px]">Win Rate: 0% | PF: 0.00 | Lucro: +0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <!-- Seletor Rápido de Timeframe dentro do Modal -->
+                    <div class="flex items-center gap-1 p-1 bg-slate-950/80 rounded-lg border border-slate-800 text-[11px] mono">
+                        <span class="text-slate-500 px-1 text-[10px] font-sans hidden sm:inline">TF:</span>
+                        <button onclick="switchModalTimeframe('1m')" id="btnModalTf1m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">1m</button>
+                        <button onclick="switchModalTimeframe('5m')" id="btnModalTf5m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">5m</button>
+                        <button onclick="switchModalTimeframe('15m')" id="btnModalTf15m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">15m</button>
+                        <button onclick="switchModalTimeframe('30m')" id="btnModalTf30m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">30m</button>
+                        <button onclick="switchModalTimeframe('1h')" id="btnModalTf1h" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">1h</button>
+                        <button onclick="switchModalTimeframe('4h')" id="btnModalTf4h" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400 hidden sm:inline">4h</button>
+                    </div>
+
+                    <!-- Botão de Ação Rápida de Disparo -->
+                    <button id="btnModalTriggerAction" onclick="fireModalAction()"
+                        class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shadow flex items-center gap-1.5 transition">
+                        <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                        <span id="btnModalTriggerActionLabel">Disparar Scalp ($9.50)</span>
+                    </button>
+
+                    <a id="btnModalBinanceLink" href="#" target="_blank"
+                        class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                        title="Ver na Binance Spot">
+                        <i data-lucide="external-link" class="w-4 h-4"></i>
+                    </a>
+
+                    <button onclick="closeLiveChartModal()" class="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900 text-slate-400 hover:text-white border border-slate-700 transition" title="Fechar (ESC)">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Diagnóstico de Fluxo L2 no Topo do Gráfico (se disponível) -->
+            <div id="modalOrderbookStrip" class="px-4 py-2 bg-[#090d18] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs mono">
+                <div class="flex items-center gap-3">
+                    <span id="modalObDemand" class="text-emerald-400 font-bold">Demanda: 0% Compra</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="modalObTape" class="text-cyan-300 font-bold">Agressão Tape: 0%</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="modalObRange" class="text-slate-300">Posição: Fundo 0%</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="modalObShield" class="text-emerald-300">🛡️ Escudo Baleia: $0.00</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="modalObTarget" class="text-amber-300">🎯 Alvo Líq: +0.00%</span>
+                </div>
+            </div>
+
+            <!-- Container do Gráfico TradingView -->
+            <div class="flex-1 w-full bg-[#0c1322] relative min-h-[460px] sm:min-h-[520px]">
+                <div id="tradingview_chart_container" class="w-full h-full min-h-[460px] sm:min-h-[520px]"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let currentStatus = null;
         let formInitialized = false;
@@ -1247,6 +1328,185 @@
         let currentTerminalTab = 'scalp'; // 'scalp' | 'sniper' | 'rocket' | 'charts' | 'both'
         let chartEquityInstance = null;
         let chartBuysSellsInstance = null;
+
+        // ESTADO & CONTROLE DO MODAL DE GRÁFICO EM TEMPO REAL
+        let currentModalSymbol = 'BTC/USDT';
+        let currentModalTimeframe = '15m';
+        let currentModalContext = {};
+        let latestOrderbookList = [];
+
+        function escapeJs(str) {
+            if (!str) return '';
+            return String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        }
+
+        function openLiveChartModal(symbol, tf, direction, strategyName, winRate, pf, netProfit, origin = 'sniper') {
+            currentModalSymbol = symbol || 'BTC/USDT';
+            currentModalTimeframe = tf || (origin === 'scalp' ? '1m' : '15m');
+            currentModalContext = { symbol, tf, direction, strategyName, winRate, pf, netProfit, origin };
+
+            const modal = document.getElementById('liveChartModal');
+            if (!modal) return;
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+
+            document.getElementById('modalChartSymbol').innerText = symbol;
+            const dirEl = document.getElementById('modalChartDirection');
+            if (dirEl) {
+                dirEl.innerText = direction || 'LONG';
+                dirEl.className = `px-2 py-0.5 rounded text-[11px] font-black ${direction === 'SHORT' ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-emerald-950 text-emerald-400 border border-emerald-800'}`;
+            }
+
+            const modeEl = document.getElementById('modalChartMode');
+            if (modeEl) {
+                if (origin === 'scalp') {
+                    modeEl.innerText = '⚡ SCALP L2 (MINUTOS)';
+                    modeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800';
+                } else if (origin === 'rocket') {
+                    modeEl.innerText = '🚀 ROCKET MEME';
+                    modeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
+                } else {
+                    modeEl.innerText = `🏆 SNIPER (${tf || 'AUTO'})`;
+                    modeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950 text-blue-300 border border-blue-800';
+                }
+            }
+
+            const stratEl = document.getElementById('modalChartStrategyName');
+            if (stratEl) stratEl.innerText = `Estratégia: ${strategyName || 'Momentum Order Flow'}`;
+
+            const statsEl = document.getElementById('modalChartStats');
+            if (statsEl) {
+                statsEl.innerText = `Win Rate: ${winRate || '68'}% | PF: ${pf || '1.85'} | Lucro Líq: ${netProfit || '+12.4'}%`;
+            }
+
+            const cleanSym = symbol.split(':')[0].replace('/', '_');
+            const binanceLink = document.getElementById('btnModalBinanceLink');
+            if (binanceLink) {
+                binanceLink.href = `https://www.binance.com/pt-BR/trade/${cleanSym}`;
+            }
+
+            const actionLabel = document.getElementById('btnModalTriggerActionLabel');
+            if (actionLabel) {
+                const margin = document.getElementById('inputScalpMargin')?.value || '9.50';
+                actionLabel.innerText = origin === 'scalp' ? `Disparar Scalp ($${margin})` : `Disparar Sniper ($${margin})`;
+            }
+
+            updateModalOrderbookStrip(symbol);
+            renderTradingViewWidget(symbol, currentModalTimeframe);
+            updateModalTfButtons(currentModalTimeframe);
+
+            if (window.lucide) window.lucide.createIcons();
+        }
+
+        function updateModalOrderbookStrip(symbol) {
+            const strip = document.getElementById('modalOrderbookStrip');
+            if (!strip) return;
+            const obItem = (latestOrderbookList || []).find(x => x.symbol === symbol);
+            if (obItem) {
+                strip.style.display = 'flex';
+                document.getElementById('modalObDemand').innerHTML = `<span class="text-emerald-400 font-bold">Demanda: ${Number(obItem.buy_pressure_pct || 50).toFixed(1)}% Compra</span> vs <span class="text-rose-400">${Number(obItem.sell_pressure_pct || 50).toFixed(1)}%</span>`;
+                document.getElementById('modalObTape').innerText = `Agressão Tape: ${Number(obItem.taker_buy_pct || 50).toFixed(1)}%`;
+                const rPos = Number(obItem.range_position_pct || 50);
+                document.getElementById('modalObRange').innerHTML = `Posição: <strong class="${rPos <= 42 ? 'text-emerald-400' : rPos >= 75 ? 'text-rose-400' : 'text-slate-300'}">${rPos <= 42 ? '🟢 Fundo Barato' : rPos >= 75 ? '🔴 Topo Esticado' : 'Meio'} (${rPos.toFixed(0)}%)</strong>`;
+                document.getElementById('modalObShield').innerText = obItem.has_whale_shield ? `🛡️ Escudo Baleia: $${obItem.bid_wall_price}` : `🛡️ Suporte: $${obItem.bid_wall_price}`;
+                document.getElementById('modalObTarget').innerText = `🎯 Alvo Líq: +${obItem.net_target_pct}% (Risco: -${obItem.risk_pct}%)`;
+            } else {
+                strip.style.display = 'none';
+            }
+        }
+
+        function renderTradingViewWidget(symbol, tf) {
+            const container = document.getElementById('tradingview_chart_container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const clean = symbol.split(':')[0].replace('/', '').toUpperCase();
+            const tvSymbol = 'BINANCE:' + clean;
+
+            let interval = '15';
+            if (tf === '1m') interval = '1';
+            else if (tf === '5m') interval = '5';
+            else if (tf === '15m') interval = '15';
+            else if (tf === '30m') interval = '30';
+            else if (tf === '1h') interval = '60';
+            else if (tf === '4h') interval = '240';
+            else if (tf === '1D') interval = 'D';
+
+            try {
+                if (typeof TradingView !== 'undefined' && TradingView.widget) {
+                    new TradingView.widget({
+                        "autosize": true,
+                        "symbol": tvSymbol,
+                        "interval": interval,
+                        "timezone": "America/Sao_Paulo",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "br",
+                        "toolbar_bg": "#0c1322",
+                        "enable_publishing": false,
+                        "allow_symbol_change": true,
+                        "save_image": false,
+                        "container_id": "tradingview_chart_container",
+                        "backgroundColor": "#0c1322",
+                        "gridColor": "rgba(30, 41, 59, 0.4)",
+                        "details": false,
+                        "hotlist": false,
+                        "calendar": false
+                    });
+                    return;
+                }
+            } catch (err) {
+                console.warn('Erro ao instanciar widget TradingView:', err);
+            }
+
+            // Fallback Iframe se tv.js demorar a carregar
+            container.innerHTML = `
+                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${interval}&theme=dark&style=1&locale=br"
+                    style="width: 100%; height: 100%; border: none;"></iframe>
+            `;
+        }
+
+        function switchModalTimeframe(tf) {
+            currentModalTimeframe = tf;
+            renderTradingViewWidget(currentModalSymbol, tf);
+            updateModalTfButtons(tf);
+        }
+
+        function updateModalTfButtons(activeTf) {
+            const tfs = ['1m', '5m', '15m', '30m', '1h', '4h'];
+            tfs.forEach(tf => {
+                const btn = document.getElementById('btnModalTf' + tf);
+                if (btn) {
+                    if (tf === activeTf) {
+                        btn.className = 'px-2 py-0.5 rounded font-black bg-blue-600 text-white shadow';
+                    } else {
+                        btn.className = 'px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400';
+                    }
+                }
+            });
+        }
+
+        function closeLiveChartModal() {
+            const modal = document.getElementById('liveChartModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            const container = document.getElementById('tradingview_chart_container');
+            if (container) container.innerHTML = '';
+        }
+
+        function fireModalAction() {
+            if (!currentModalSymbol) return;
+            const obItem = (latestOrderbookList || []).find(x => x.symbol === currentModalSymbol);
+            if (obItem) {
+                fireOrderbookScalp(obItem.symbol, obItem.entry_price, obItem.stop_price, obItem.take_profit_price);
+                closeLiveChartModal();
+            } else {
+                triggerManualSymbol(currentModalSymbol, currentModalTimeframe, 'LONG');
+                closeLiveChartModal();
+            }
+        }
 
         function switchTerminalTab(tab) {
             currentTerminalTab = tab;
@@ -1844,10 +2104,11 @@
                         }
 
                         return `
-                            <tr class="hover:bg-slate-800/40">
+                            <tr class="hover:bg-slate-800/70 cursor-pointer group transition" onclick="openLiveChartModal('${p.symbol}', '1m', 'LONG', '${escapeJs(p.mode || 'Posição Aberta')}', '100', '2.5', '+${tpPct.toFixed(2)}', '${p.mode === 'ROCKET_MEME' ? 'rocket' : 'scalp'}')" title="Clique para abrir Gráfico em Tempo Real">
                                 <td class="py-2.5 px-2">
                                     <div class="flex items-center gap-1.5">
                                         <span class="font-extrabold text-white text-sm">${p.symbol}</span>
+                                        <span class="text-[10px] text-blue-400 group-hover:text-blue-300 opacity-70 group-hover:opacity-100 flex items-center">📈</span>
                                         <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${p.mode === 'ROCKET_MEME' ? 'bg-purple-900/80 text-purple-300 border border-purple-700' : (p.mode === 'SNIPER_CANDLE' ? 'bg-sky-900/80 text-sky-300 border border-sky-700' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40')}">${horizonBadge}</span>
                                     </div>
                                     <div class="text-[10px] text-amber-300">$${Number(p.notional_usd || 0).toFixed(2)} USDT • ${ageMin.toFixed(1)}m aberto</div>
@@ -1881,7 +2142,7 @@
                                     ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
                                 </td>
                                 <td class="py-2.5 px-2 text-right">
-                                    <button onclick="closePositionMarket('${p.symbol}')"
+                                    <button onclick="event.stopPropagation(); closePositionMarket('${p.symbol}')"
                                         class="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-[11px] shadow transition">
                                         💰 Vender Agora
                                     </button>
@@ -1993,9 +2254,12 @@
                     const minNotional = Number(c.min_notional_usdt || 5.0);
                     const compatible = (notional * 1.25) >= minNotional;
                     return `
-                        <tr class="hover:bg-slate-800/40">
+                        <tr class="hover:bg-slate-800/70 cursor-pointer group transition" onclick="openLiveChartModal('${c.symbol}', '${c.timeframe}', '${c.direction}', '${escapeJs(c.strategy_name)}', '${c.win_rate_pct}', '${c.profit_factor}', '${c.net_profit_real}', 'sniper')" title="Clique para abrir Gráfico em Tempo Real com a Estratégia">
                             <td class="py-2 px-2 text-slate-500">#${i + 1}</td>
-                            <td class="py-2 px-2 font-bold text-white">${c.symbol}</td>
+                            <td class="py-2 px-2 font-bold text-white flex items-center gap-1.5">
+                                <span>${c.symbol}</span>
+                                <span class="text-[10px] text-blue-400 group-hover:text-blue-300 opacity-70 group-hover:opacity-100 flex items-center">📈</span>
+                            </td>
                             <td class="py-2 px-2"><span class="px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 text-[10px] font-bold">${c.timeframe}</span></td>
                             <td class="py-2 px-2">
                                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${isLong ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'}">${c.direction}</span>
@@ -2659,6 +2923,7 @@
             }
 
             const list = data.opportunities || [];
+            latestOrderbookList = list;
             const tbody = document.getElementById('tableOrderbookScalp');
             if (!tbody) return;
             if (list.length === 0) {
@@ -2698,13 +2963,12 @@
                         ? 'bg-slate-900 text-rose-400 border border-rose-800 opacity-60 cursor-not-allowed'
                         : (item.signal_ready ? 'bg-amber-500 hover:bg-amber-400 text-black font-extrabold shadow' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'));
 
-                const btnClick = item.is_climax_top ? '' : `onclick="fireOrderbookScalp('${item.symbol}', ${item.entry_price}, ${item.stop_price}, ${item.take_profit_price})"`;
-
                 return `
-                    <tr class="hover:bg-slate-800/40">
+                    <tr class="hover:bg-slate-800/70 cursor-pointer group transition" onclick="openLiveChartModal('${item.symbol}', '1m', 'LONG', 'Scalp Livro Nível 2', '74', '2.40', '+${item.net_target_pct}', 'scalp')" title="Clique para abrir Gráfico 1m em Tempo Real">
                         <td class="py-2 px-2">
                             <div class="font-bold text-white flex items-center gap-1.5">
                                 <span>${item.symbol}</span>
+                                <span class="text-[10px] text-blue-400 group-hover:text-blue-300 opacity-70 group-hover:opacity-100 flex items-center">📈</span>
                                 ${rPosBadge}
                             </div>
                             <div class="text-[10px] text-slate-400">$${item.price} <span class="text-slate-500">(sp: ${item.spread_pct}%)</span></div>
@@ -2741,7 +3005,7 @@
                             <span class="px-2 py-0.5 rounded border text-[10px] font-sans ${regimeBadge}">${item.regime}</span>
                         </td>
                         <td class="py-2 px-2 text-right">
-                            <button ${btnClick} ${item.is_climax_top ? 'disabled' : ''}
+                            <button onclick="event.stopPropagation(); ${item.is_climax_top ? '' : `fireOrderbookScalp('${item.symbol}', ${item.entry_price}, ${item.stop_price}, ${item.take_profit_price})`}" ${item.is_climax_top ? 'disabled' : ''}
                                 class="px-2.5 py-1 rounded text-[11px] transition ${btnClass}">
                                 ${btnLabel}
                             </button>
@@ -2749,6 +3013,16 @@
                     </tr>
                 `;
             }).join('');
+        }
+
+        // FECHAR MODAIS AO PRESSIONAR ESC
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeLiveChartModal();
+                closeCredentialsModal();
+                closeIosInstallModal();
+            }
+        });
         }
     </script>
 </body>

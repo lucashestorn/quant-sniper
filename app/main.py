@@ -588,7 +588,7 @@ async def run_candle_close_sniper() -> None:
                         "CAPITAL_PRIORITY_RECYCLE",
                         f"Reciclando scalp {scalp_to_recycle['symbol']} no lucro para liberar margem para o disparo Sniper de {sym} [{tf}]!",
                     )
-                    await executor.close_position(scalp_to_recycle["symbol"], reason="PRIORIDADE_SNIPER")
+                    await executor.close_spot_position(scalp_to_recycle["symbol"], reason="PRIORIDADE_SNIPER")
                     await asyncio.sleep(0.5)
                     state.wallet_balance = await executor.get_wallet_balance()
 
@@ -1235,21 +1235,17 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
 
     now_sec = _t.time()
     if (now_sec - state.orderbook_last_ts) >= 3.5 or not state.orderbook_cache:
-        target_syms = list(state.symbols_meta.keys())[:16]
-        if not target_syms:
-            target_syms = [
-                "BTC/USDT",
-                "ETH/USDT",
-                "SOL/USDT",
-                "BNB/USDT",
-                "XRP/USDT",
-                "DOGE/USDT",
-                "PEPE/USDT",
-                "ZEC/USDT",
-                "NEAR/USDT",
-                "UNI/USDT",
-                "XAUT/USDT",
-            ]
+        top_spot_symbols = [
+            "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+            "DOGE/USDT", "PEPE/USDT", "SHIB/USDT", "SUI/USDT", "ADA/USDT",
+            "AVAX/USDT", "NEAR/USDT", "LINK/USDT", "APT/USDT", "UNI/USDT",
+            "FET/USDT", "RENDER/USDT", "TAO/USDT", "TIA/USDT", "INJ/USDT",
+            "ARB/USDT", "OP/USDT", "LTC/USDT", "BCH/USDT", "SEI/USDT",
+            "DOT/USDT", "AAVE/USDT", "WIF/USDT", "FLOKI/USDT", "BONK/USDT",
+            "ZEC/USDT", "XAUT/USDT",
+        ]
+        meta_syms = list(state.symbols_meta.keys())
+        target_syms = list(dict.fromkeys(meta_syms + top_spot_symbols))[:32]
         state.orderbook_cache = await executor.scan_orderbook_scalp(
             target_syms,
             scalp_tp_pct=state.scalp_tp_pct,

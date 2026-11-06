@@ -111,7 +111,7 @@ class BinanceFuturesExecutor:
         self._spot_limits_cache: Dict[str, float] = {}
         self._step_size_cache: Dict[str, str] = {}
         self.last_auth_error: Optional[str] = None
-        self._sem = asyncio.Semaphore(10)
+        self._sem = asyncio.Semaphore(20)
 
         # Offset de tempo em relação ao servidor da Binance (evita erro -1021 de relógio adiantado)
         self._time_offset_ms: int = -1000
@@ -941,6 +941,9 @@ class BinanceFuturesExecutor:
         self.last_closed_events.append(receipt)
         return receipt
 
+    # Alias de compatibilidade
+    close_position = close_spot_position
+
     async def _check_position_momentum(self, raw_pair: str, mark_p: float) -> Dict[str, float]:
         """
         Mede o pulso instantâneo do Livro de Ofertas (50 níveis) e da Agressão no Tape de 1m
@@ -1434,7 +1437,7 @@ class BinanceFuturesExecutor:
                         ),
                         self.http_client.get(
                             f"{VISION_BASE_URL}/klines",
-                            params={"symbol": raw_sym, "interval": "5m", "limit": 3},
+                            params={"symbol": raw_sym, "interval": "1m", "limit": 15},
                         ),
                     )
                 if depth_resp.status_code != 200 or kline_resp.status_code != 200:
@@ -1493,32 +1496,53 @@ class BinanceFuturesExecutor:
                 sell_pressure_pct = 100.0 - buy_pressure_pct
                 obi_pct = ((bids_usd - asks_usd) / total_book_usd) * 100.0
 
-                # Fluxo de Agressão Compradora Real (Taker Buy Quote Volume nas últimas velas de 5m)
-                total_quote_vol = sum(float(k[7]) for k in klines[-2:]) if klines else 0.0
-                taker_buy_vol = sum(float(k[10]) for k in klines[-2:]) if klines else 0.0
+                # Micro-Tendência & Fluxo das últimas velas de 1m (Momentum de Curto Prazo)
+                closes = [float(k[4]) for k in klines] if klines else [best_ask]
+                sma_9 = sum(closes[-9:]) / len(closes[-9:]) if len(closes) >= 9 else closes[-1]
+                cur_close = closes[-1] if closes else best_ask
+                # Preço não pode estar em queda livre desordenada abaixo da média rápida de 1m
+                micro_trend_ok = bool(best_ask >= (sma_9 * 0.9991))
+
+                # Fluxo de Agressão Compradora Real (Taker Buy Quote Volume nas últimas 5 velas de 1m)
+                total_quote_vol = sum(float(k[7]) for k in klines[-5:]) if klines else 0.0
+                taker_buy_vol = sum(float(k[10]) for k in klines[-5:]) if klines else 0.0
                 taker_buy_pct = ((taker_buy_vol / total_quote_vol) * 100.0) if total_quote_vol > 0 else 50.0
 
+                # Escudo de Baleia (Whale Shield Stop):
+                # Se houver um paredão institucional relevante de compra entre 0.12% e 0.70% abaixo do preço,
+                # posicionamos o stop loss 0.10% ATRÁS da muralha para proteção contra violinadas de ruído.
+                has_whale_shield = bool(bid_wall_price > 0 and (best_ask * 0.9930) <= bid_wall_price <= (best_ask * 0.9988))
+                whale_shield_stop = bid_wall_price * 0.9990 if has_whale_shield else (best_ask * 0.9965)
+
                 if target_mode.upper() == "WALL":
-                    raw_stop = bid_wall_price * 0.9988
-                    stop_dist = max(best_ask * 0.0035, min(best_ask - raw_stop, best_ask * 0.0085))
+                    raw_stop = whale_shield_stop
+                    stop_dist = max(best_ask * 0.0030, min(best_ask - raw_stop, best_ask * 0.0085))
                     stop_price = best_ask - stop_dist
 
-                    min_tp_dist = max(stop_dist * 1.75, best_ask * 0.0055)
+                    min_tp_dist = max(stop_dist * 1.65, best_ask * 0.0055)
                     wall_tp_dist = max(min_tp_dist, (ask_wall_price * 0.9990) - best_ask)
                     tp_dist = min(wall_tp_dist, best_ask * 0.0150)
                     tp_price = best_ask + tp_dist
                 else:
                     # Modo Alvo Fixo Rápido configurado pelo usuário no painel de Scalp Separado
                     tp_dist = best_ask * (max(0.25, float(scalp_tp_pct)) / 100.0)
-                    stop_dist = best_ask * (max(0.20, float(scalp_sl_pct)) / 100.0)
+                    user_stop_dist = best_ask * (max(0.20, float(scalp_sl_pct)) / 100.0)
+
+                    # Se existe Escudo de Baleia próximo, posicionamos o stop ligeiramente atrás para não ser violinado
+                    if has_whale_shield and (best_ask - whale_shield_stop) <= (best_ask * 0.0075):
+                        stop_price = min(best_ask - user_stop_dist, whale_shield_stop)
+                        stop_dist = best_ask - stop_price
+                    else:
+                        stop_dist = user_stop_dist
+                        stop_price = best_ask - stop_dist
+
                     tp_price = best_ask + tp_dist
-                    stop_price = best_ask - stop_dist
 
                 gross_target_pct = (tp_dist / best_ask) * 100.0
                 net_target_pct = gross_target_pct - 0.11
                 risk_pct = (stop_dist / best_ask) * 100.0
 
-                # Posição Relativa do Preço no Range Recente (Preço Barato no Fundo vs Caro no Topo)
+                # Posição Relativa do Preço no Range Recente de 1m (Preço Barato no Fundo vs Caro no Topo)
                 candle_high = max(float(k[2]) for k in klines) if klines else best_ask
                 candle_low = min(float(k[3]) for k in klines) if klines else best_ask
                 range_height = candle_high - candle_low
@@ -1533,28 +1557,30 @@ class BinanceFuturesExecutor:
                 scalp_score = round((buy_pressure_pct * 0.58) + (taker_buy_pct * 0.42), 1)
 
                 # 2. Regime de Antecipação Institucional no Fundo:
-                # Preço BARATO (<= 42% do range), Muralha compradora pesada (Bids >= 59%),
-                # Tape em início de ignição (46% a 60%, sem euforia tardia) e spread fino.
+                # Preço BARATO (<= 42% do range), Micro-tendência alinhada, Muralha compradora pesada (Bids >= 58.5%),
+                # Tape em início de ignição (45% a 61%, sem euforia tardia) e spread fino.
                 is_anticipation = bool(
                     not is_climax_top
+                    and micro_trend_ok
                     and range_position_pct <= 42.0
-                    and buy_pressure_pct >= 59.0
-                    and (46.0 <= taker_buy_pct <= 60.0)
-                    and spread_pct <= 0.05
-                    and net_target_pct >= 0.25
+                    and buy_pressure_pct >= 58.5
+                    and (45.0 <= taker_buy_pct <= 61.0)
+                    and spread_pct <= 0.055
+                    and net_target_pct >= 0.22
                 )
 
-                # 3. Gatilho de Demanda Dominante (Apenas se não for Topo Esticado)
+                # 3. Gatilho de Demanda Dominante (Apenas se não for Topo Esticado e Micro-Tendência Favorável)
                 signal_ready = bool(
                     not is_climax_top
+                    and micro_trend_ok
                     and (
                         is_anticipation
                         or (
                             buy_pressure_pct >= 58.0
-                            and taker_buy_pct >= 52.0
+                            and taker_buy_pct >= 51.5
                             and range_position_pct <= 68.0
                             and spread_pct <= 0.06
-                            and net_target_pct >= 0.25
+                            and net_target_pct >= 0.22
                         )
                     )
                 )
@@ -1579,6 +1605,9 @@ class BinanceFuturesExecutor:
                     "price": round(best_ask, 6),
                     "range_position_pct": range_position_pct,
                     "is_climax_top": is_climax_top,
+                    "micro_trend_ok": micro_trend_ok,
+                    "has_whale_shield": has_whale_shield,
+                    "whale_shield_price": round(whale_shield_stop, 6),
                     "spread_pct": round(spread_pct, 4),
                     "bids_usd": round(bids_usd, 0),
                     "asks_usd": round(asks_usd, 0),
@@ -1605,7 +1634,7 @@ class BinanceFuturesExecutor:
                 logger.debug(f"[{sym}] Erro ao analisar Order Book: {exc}")
                 return None
 
-        results = await asyncio.gather(*(_analyze_one(s) for s in symbols[:16]))
+        results = await asyncio.gather(*(_analyze_one(s) for s in symbols[:35]))
         valid = [r for r in results if r is not None]
         valid.sort(key=lambda x: x["scalp_score"], reverse=True)
         return valid
