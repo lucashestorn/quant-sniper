@@ -1518,32 +1518,52 @@ class BinanceFuturesExecutor:
                 net_target_pct = gross_target_pct - 0.11
                 risk_pct = (stop_dist / best_ask) * 100.0
 
+                # Posição Relativa do Preço no Range Recente (Preço Barato no Fundo vs Caro no Topo)
+                candle_high = max(float(k[2]) for k in klines) if klines else best_ask
+                candle_low = min(float(k[3]) for k in klines) if klines else best_ask
+                range_height = candle_high - candle_low
+                range_position_pct = round(((best_ask - candle_low) / range_height) * 100.0, 1) if range_height > 0 else 50.0
+
+                # 1. Filtro Anti-Topo / Clímax:
+                # Se o preço já está no topo (>= 75% da pernada recente) e a agressão de compra do tape já bateu 67%+,
+                # a manada já comprou e o risco de reversão é altíssimo!
+                is_climax_top = bool(range_position_pct >= 75.0 and taker_buy_pct >= 67.0)
+
                 # Score de Confluência Order Book + Tape Reading (0 a 100)
                 scalp_score = round((buy_pressure_pct * 0.58) + (taker_buy_pct * 0.42), 1)
 
-                # Regime de Antecipação Institucional:
-                # Ocorre quando há forte muralha compradora no suporte (Bids >= 61%), mas a manada ainda
-                # não comprou à mercado (Taker Buy <= 55%). Permite comprar NO FUNDO antes do topo!
+                # 2. Regime de Antecipação Institucional no Fundo:
+                # Preço BARATO (<= 42% do range), Muralha compradora pesada (Bids >= 59%),
+                # Tape em início de ignição (46% a 60%, sem euforia tardia) e spread fino.
                 is_anticipation = bool(
-                    buy_pressure_pct >= 61.0
-                    and taker_buy_pct <= 55.0
+                    not is_climax_top
+                    and range_position_pct <= 42.0
+                    and buy_pressure_pct >= 59.0
+                    and (46.0 <= taker_buy_pct <= 60.0)
                     and spread_pct <= 0.05
                     and net_target_pct >= 0.25
                 )
 
+                # 3. Gatilho de Demanda Dominante (Apenas se não for Topo Esticado)
                 signal_ready = bool(
-                    (
-                        buy_pressure_pct >= 57.5
-                        and taker_buy_pct >= 52.0
-                        and spread_pct <= 0.06
-                        and net_target_pct >= 0.25
+                    not is_climax_top
+                    and (
+                        is_anticipation
+                        or (
+                            buy_pressure_pct >= 58.0
+                            and taker_buy_pct >= 52.0
+                            and range_position_pct <= 68.0
+                            and spread_pct <= 0.06
+                            and net_target_pct >= 0.25
+                        )
                     )
-                    or is_anticipation
                 )
 
-                if is_anticipation:
-                    regime = "🎯 ANTECIPAÇÃO (Muralha Compradora no Fundo)"
-                elif buy_pressure_pct >= 64.0 and taker_buy_pct >= 55.0:
+                if is_climax_top:
+                    regime = "⚠️ CLÍMAX COMPRADOR (TOPO - NÃO COMPRAR)"
+                elif is_anticipation:
+                    regime = "🎯 ANTECIPAÇÃO NO FUNDO (Preço Barato + Suporte)"
+                elif buy_pressure_pct >= 64.0 and taker_buy_pct >= 55.0 and range_position_pct <= 65.0:
                     regime = "🔥 FORTE ABSORÇÃO COMPRADORA"
                 elif signal_ready:
                     regime = "DEMANDA DOMINANTE (GATILHO)"
@@ -1557,6 +1577,8 @@ class BinanceFuturesExecutor:
                 return {
                     "symbol": sym,
                     "price": round(best_ask, 6),
+                    "range_position_pct": range_position_pct,
+                    "is_climax_top": is_climax_top,
                     "spread_pct": round(spread_pct, 4),
                     "bids_usd": round(bids_usd, 0),
                     "asks_usd": round(asks_usd, 0),

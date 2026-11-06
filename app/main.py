@@ -1506,12 +1506,13 @@ async def check_auto_scalp_and_rotation() -> None:
             if item.get("symbol") in open_syms:
                 continue
 
-            # Qualifica se tem sinal de Antecipação no Suporte OU Demanda Dominante
+            # Qualifica se tem sinal de Antecipação no Suporte OU Demanda Dominante (Bloqueia Clímax de Topo)
             is_promising = bool(
                 item.get("signal_ready")
+                and not item.get("is_climax_top")
                 and (
                     item.get("is_anticipation")
-                    or (item.get("buy_pressure_pct", 0) >= 59.0 and item.get("taker_buy_pct", 0) >= 52.0)
+                    or (item.get("buy_pressure_pct", 0) >= 59.0 and item.get("taker_buy_pct", 0) >= 52.0 and item.get("range_position_pct", 50) <= 68.0)
                 )
             )
 
