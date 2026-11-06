@@ -260,18 +260,33 @@
                 </div>
             </section>
 
-            <!-- POSIÇÕES DE SCALP EM CURSO (COM PREÇO EXATO DE VENDA, PROGRESSO E VENDA A MERCADO 1-CLICK) -->
+            <!-- POSIÇÕES DE SCALP EM CURSO (COM PREÇO EXATO DE VENDA, MOMENTO AO VIVO E VENDA A MERCADO 1-CLICK) -->
             <section class="card-glass rounded-xl p-4 border border-emerald-500/30">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <div class="flex items-center gap-2">
                         <i data-lucide="crosshair" class="w-4 h-4 text-emerald-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
-                            Suas Operações de Scalp Abertas Agora — Monitoramento de Saída Automática (a cada 6s)
-                        </h3>
+                        <div>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                                Suas Operações de Scalp Abertas Agora — Venda Automática por Alvo, Stop ou Virada de Momento (6s)
+                            </h3>
+                            <p class="text-[11px] text-slate-400">
+                                Vende sozinho se bater no Alvo TP, se subir e perder força no topo, se o Livro/Tape virar vendedor ou se estagnar por tempo.
+                            </p>
+                        </div>
                     </div>
-                    <span id="scalpOpenPosBadge" class="text-[11px] mono px-2.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
-                        Sincronizando posições...
-                    </span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="toggleMomentumExit()" id="btnAutoMomentumExit"
+                            class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-emerald-500 hover:bg-emerald-400 text-black shadow">
+                            <span>🧠 Auto-Venda se Momento Passar: ATIVO</span>
+                        </button>
+                        <button onclick="closeAllPositionsMarket()"
+                            class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-rose-600 hover:bg-rose-500 text-white shadow">
+                            <span>🚨 Vender Todas Agora</span>
+                        </button>
+                        <span id="scalpOpenPosBadge" class="text-[11px] mono px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
+                            Sincronizando...
+                        </span>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
@@ -282,14 +297,15 @@
                                 <th class="py-2 px-2">Preço Atual (Mark)</th>
                                 <th class="py-2 px-2">Stop Loss (SL)</th>
                                 <th class="py-2 px-2">Em Quanto Vende (Alvo TP)</th>
-                                <th class="py-2 px-2 w-44">Progresso até a Venda</th>
+                                <th class="py-2 px-2">Diagnóstico do Momento (Book + Tape 1m)</th>
+                                <th class="py-2 px-2 w-40">Progresso até a Venda</th>
                                 <th class="py-2 px-2 text-right">PnL Atual</th>
                                 <th class="py-2 px-2 text-right">Saída Manual (1-Click)</th>
                             </tr>
                         </thead>
                         <tbody id="tableScalpOpenPositions" class="divide-y divide-slate-800/60 mono">
                             <tr>
-                                <td colspan="8" class="py-6 text-center text-slate-500">Carregando posições abertas da conta Spot...</td>
+                                <td colspan="9" class="py-6 text-center text-slate-500">Carregando posições abertas da conta Spot...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -707,6 +723,25 @@
             }
         }
 
+        async function closeAllPositionsMarket() {
+            const res = await fetch('/api/positions/close-all', { method: 'POST' });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
+
+        async function toggleMomentumExit() {
+            const currentMom = currentStatus && currentStatus.auto_momentum_exit !== undefined ? Boolean(currentStatus.auto_momentum_exit) : true;
+            const res = await fetch('/api/scalp/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auto_momentum_exit: !currentMom, apply_to_open: false })
+            });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
+
         function setViewMode(mode) {
             currentViewMode = mode;
             const bChamp = document.getElementById('btnViewChampions');
@@ -915,7 +950,19 @@
                 calState.className = 'text-xs mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800';
             }
 
-            // Render Separated Scalp Open Positions Table (with exact Sell Price + Progress Bar + 1-Click Sell)
+            // Render Separated Scalp Open Positions Table (with exact Sell Price + Live Momentum + Progress Bar + 1-Click Sell)
+            const btnMom = document.getElementById('btnAutoMomentumExit');
+            if (btnMom) {
+                const momOn = data.auto_momentum_exit !== undefined ? Boolean(data.auto_momentum_exit) : true;
+                if (momOn) {
+                    btnMom.innerHTML = `<span>🧠 Auto-Venda se Momento Passar: ATIVO</span>`;
+                    btnMom.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-emerald-500 hover:bg-emerald-400 text-black shadow';
+                } else {
+                    btnMom.innerHTML = `<span>🧠 Auto-Venda se Momento Passar: OFF</span>`;
+                    btnMom.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+                }
+            }
+
             const scalpBadge = document.getElementById('scalpOpenPosBadge');
             if (scalpBadge) {
                 scalpBadge.innerText = `${openPos.length} / ${maxPos} posições ativas`;
@@ -923,7 +970,7 @@
             const tbodyScalpPos = document.getElementById('tableScalpOpenPositions');
             if (tbodyScalpPos) {
                 if (openPos.length === 0) {
-                    tbodyScalpPos.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-slate-500">Nenhuma posição aberta no momento. Clique em <strong>⚡ Scalp</strong> em qualquer ativo abaixo ou ative o <strong>Auto-Scalp Book</strong>.</td></tr>`;
+                    tbodyScalpPos.innerHTML = `<tr><td colspan="9" class="py-6 text-center text-slate-500">Nenhuma posição aberta no momento. Clique em <strong>⚡ Scalp</strong> em qualquer ativo abaixo ou ative o <strong>Auto-Scalp Book</strong>.</td></tr>`;
                 } else {
                     tbodyScalpPos.innerHTML = openPos.map(p => {
                         const entryP = Number(p.entry_price || 0);
@@ -932,6 +979,9 @@
                         const tpP = Number(p.take_profit_price || 0);
                         const pnl = Number(p.unrealized_pnl || 0);
                         const pnlPct = Number(p.pnl_pct || ((entryP > 0) ? ((markP - entryP) / entryP * 100) : 0));
+                        const maxPnlPct = Number(p.max_pnl_pct || Math.max(0, pnlPct));
+                        const ageMin = Number(p.age_minutes || 0);
+                        const momStatus = p.momentum_status || '🟢 Monitorando Fluxo';
                         const tpPct = Number(p.tp_pct || ((entryP > 0 && tpP > 0) ? ((tpP - entryP) / entryP * 100) : 0.50));
                         const slPct = Number(p.sl_pct || ((entryP > 0 && stopP > 0) ? ((entryP - stopP) / entryP * 100) : 0.35));
 
@@ -946,7 +996,7 @@
                             <tr class="hover:bg-slate-800/40">
                                 <td class="py-2.5 px-2">
                                     <div class="font-extrabold text-white">${p.symbol}</div>
-                                    <div class="text-[10px] text-amber-300">$${Number(p.notional_usd || 0).toFixed(2)} USDT (${p.contracts} un.)</div>
+                                    <div class="text-[10px] text-amber-300">$${Number(p.notional_usd || 0).toFixed(2)} USDT • ${ageMin.toFixed(1)}m aberto</div>
                                 </td>
                                 <td class="py-2.5 px-2 text-slate-300 font-bold">$${entryP}</td>
                                 <td class="py-2.5 px-2 font-extrabold ${markP >= entryP ? 'text-emerald-400' : 'text-rose-400'}">$${markP}</td>
@@ -957,6 +1007,10 @@
                                 <td class="py-2.5 px-2">
                                     <div class="text-emerald-300 font-extrabold">$${tpP}</div>
                                     <div class="text-[10px] text-emerald-400">+${tpPct.toFixed(2)}% (Venda Auto)</div>
+                                </td>
+                                <td class="py-2.5 px-2">
+                                    <div class="text-[11px] font-sans font-bold text-slate-200">${momStatus}</div>
+                                    <div class="text-[10px] text-slate-400">Topo atingido: <strong class="text-emerald-300">+${maxPnlPct.toFixed(2)}%</strong></div>
                                 </td>
                                 <td class="py-2.5 px-2">
                                     <div class="flex justify-between text-[10px] mb-1">

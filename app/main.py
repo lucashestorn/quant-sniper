@@ -72,6 +72,8 @@ class ScalpConfigRequest(BaseModel):
     scalp_target_mode: Optional[str] = None
     scalp_margin_usdt: Optional[float] = None
     orderbook_scalp_auto: Optional[bool] = None
+    auto_momentum_exit: Optional[bool] = None
+    max_hold_minutes: Optional[int] = None
     apply_to_open: Optional[bool] = True
 
 
@@ -431,23 +433,24 @@ async def run_candle_close_sniper() -> None:
 
 async def run_scalp_position_guardian() -> None:
     """
-    Guardião 24/7 (a cada 6 segundos) que monitora o preço a mercado das posições abertas
-    (Scalp ou Sniper) e executa a venda automática caso atinjam o Take Profit ou Stop Loss,
-    mesmo com o navegador fechado.
+    Guardião 24/7 (a cada 6 segundos) que monitora o preço a mercado e o momento do Livro/Tape
+    das posições abertas (Scalp ou Sniper) e executa a venda automática caso atinjam o Take Profit,
+    Stop Loss ou se o momento passar (Proteção de Topo, Virada de Fluxo ou Expiração de Tempo).
     """
     try:
-        prev_syms = {p["symbol"] for p in state.open_positions}
         current_pos = await executor.get_open_positions()
-        curr_syms = {p["symbol"] for p in current_pos}
         state.open_positions = current_pos
 
-        closed_now = prev_syms - curr_syms
-        if closed_now:
+        if executor.last_closed_events:
             state.wallet_balance = await executor.get_wallet_balance()
-            for s in closed_now:
+            while executor.last_closed_events:
+                ev = executor.last_closed_events.pop(0)
+                if ev.get("reason") == "MANUAL_CLICK":
+                    continue
                 state.append_log(
                     "POSITION_CLOSED",
-                    f"Posição {s} encerrada automaticamente (Take Profit / Stop Loss atingido no Spot).",
+                    f"AUTO-VENDA EXECUTADA [{ev.get('reason')}]: {ev.get('symbol')} vendido por ${ev.get('received_usdt', 0):.2f} USDT @ {ev.get('exit_price', 0)} (PnL: ${ev.get('realized_pnl', 0):+.2f} USDT)",
+                    ev,
                 )
     except Exception as exc:
         logger.debug(f"Erro no guardião de posições: {exc}")
@@ -549,6 +552,8 @@ async def get_status() -> Dict[str, Any]:
         "scalp_sl_pct": state.scalp_sl_pct,
         "scalp_target_mode": state.scalp_target_mode,
         "scalp_margin_usdt": state.scalp_margin_usdt,
+        "auto_momentum_exit": executor.auto_momentum_exit,
+        "max_hold_minutes": executor.max_hold_minutes,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -758,6 +763,8 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
     return {
         "status": "ok",
         "auto_enabled": state.orderbook_scalp_auto,
+        "auto_momentum_exit": executor.auto_momentum_exit,
+        "max_hold_minutes": executor.max_hold_minutes,
         "scalp_tp_pct": state.scalp_tp_pct,
         "scalp_sl_pct": state.scalp_sl_pct,
         "scalp_target_mode": state.scalp_target_mode,
@@ -771,8 +778,8 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
 async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
     """
     Atualiza os parâmetros dedicados do Terminal de Scalp Separado (Alvo TP %, Stop Loss %,
-    Modo Fixo vs Paredão, Mão por Trade e Auto-Scalp) e opcionalmente recalcula o preço de venda
-    das posições abertas imediatamente.
+    Modo Fixo vs Paredão, Mão por Trade, Auto-Scalp e Auto-Venda por Perda de Momento)
+    e opcionalmente recalcula o preço de venda das posições abertas imediatamente.
     """
     changes: List[str] = []
     if req.scalp_tp_pct is not None:
@@ -790,6 +797,12 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
     if req.orderbook_scalp_auto is not None:
         state.orderbook_scalp_auto = bool(req.orderbook_scalp_auto)
         changes.append(f"AutoScalp={'ON' if state.orderbook_scalp_auto else 'OFF'}")
+    if req.auto_momentum_exit is not None:
+        executor.auto_momentum_exit = bool(req.auto_momentum_exit)
+        changes.append(f"AutoVendaMomento={'ON' if executor.auto_momentum_exit else 'OFF'}")
+    if req.max_hold_minutes is not None:
+        executor.max_hold_minutes = max(3, min(120, int(req.max_hold_minutes)))
+        changes.append(f"TempoMáx={executor.max_hold_minutes}m")
 
     updated_open: List[str] = []
     if req.apply_to_open:
@@ -816,6 +829,8 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
         "scalp_target_mode": state.scalp_target_mode,
         "scalp_margin_usdt": state.scalp_margin_usdt,
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "auto_momentum_exit": executor.auto_momentum_exit,
+        "max_hold_minutes": executor.max_hold_minutes,
         "open_positions": state.open_positions,
     }
 
@@ -829,13 +844,35 @@ async def close_open_position(req: ClosePositionRequest) -> Dict[str, Any]:
         state.wallet_balance = await executor.get_wallet_balance()
         state.append_log(
             "POSITION_CLOSED",
-            f"VENDA A MERCADO EXECUTADA: {res['symbol']} vendido por ${res.get('received_usdt', 0):.2f} USDT @ {res.get('exit_price', 0)} (PnL: ${res.get('realized_pnl', 0):+.2f} USDT)",
+            f"VENDA MANUAL A MERCADO EXECUTADA: {res['symbol']} vendido por ${res.get('received_usdt', 0):.2f} USDT @ {res.get('exit_price', 0)} (PnL: ${res.get('realized_pnl', 0):+.2f} USDT)",
             res,
         )
         return {"status": "ok", "receipt": res}
     except Exception as exc:
         state.append_log("ORDER_ERROR", f"Falha ao vender posição {req.symbol}: {exc}")
         return {"status": "error", "message": str(exc)}
+
+
+@app.post("/api/positions/close-all")
+async def close_all_open_positions() -> Dict[str, Any]:
+    """Vende imediatamente a mercado TODAS as posições abertas na conta para USDT."""
+    open_pos = await executor.get_open_positions()
+    receipts: List[Dict[str, Any]] = []
+    for p in open_pos:
+        sym = p["symbol"]
+        try:
+            r = await executor.close_spot_position(sym, reason="MANUAL_CLOSE_ALL")
+            receipts.append(r)
+            state.append_log(
+                "POSITION_CLOSED",
+                f"VENDA TOTAL A MERCADO: {r['symbol']} vendido por ${r.get('received_usdt', 0):.2f} USDT @ {r.get('exit_price', 0)} (PnL: ${r.get('realized_pnl', 0):+.2f} USDT)",
+                r,
+            )
+        except Exception as exc:
+            state.append_log("ORDER_ERROR", f"Erro ao zerar {sym}: {exc}")
+    state.open_positions = await executor.get_open_positions()
+    state.wallet_balance = await executor.get_wallet_balance()
+    return {"status": "ok", "closed_count": len(receipts), "receipts": receipts}
 
 
 @app.post("/api/orderbook-scalp/execute")

@@ -120,6 +120,10 @@ class BinanceFuturesExecutor:
         self.shadow_positions: Dict[str, Dict[str, Any]] = {}
         # Rastreamento persistente de Entrada, Stop Loss e Take Profit para posições Reais Spot
         self.real_spot_brackets: Dict[str, Dict[str, Any]] = self._load_brackets()
+        # Configurações de Auto-Venda Inteligente quando o momento passar
+        self.auto_momentum_exit: bool = True
+        self.max_hold_minutes: int = 12
+        self.last_closed_events: List[Dict[str, Any]] = []
 
     def _load_brackets(self) -> Dict[str, Dict[str, Any]]:
         try:
@@ -686,7 +690,7 @@ class BinanceFuturesExecutor:
         logger.info(
             f"[{sym_pair}] [SPOT SELL {reason}] Vendido {executed_qty} {coin} -> ${received_usdt:.2f} USDT @ {avg_exit:.6f} (PnL: ${realized_pnl:+.2f})"
         )
-        return {
+        receipt = {
             "symbol": sym_pair,
             "reason": reason,
             "order_id": sell_res.get("orderId"),
@@ -696,6 +700,46 @@ class BinanceFuturesExecutor:
             "exit_price": round(avg_exit, 6),
             "realized_pnl": round(realized_pnl, 2),
         }
+        self.last_closed_events.append(receipt)
+        return receipt
+
+    async def _check_position_momentum(self, raw_pair: str, mark_p: float) -> Dict[str, float]:
+        """
+        Mede o pulso instantâneo do Livro de Ofertas (50 níveis) e da Agressão no Tape de 1m
+        para uma posição aberta, permitindo detectar se o momento comprador passou ou virou vendedor.
+        """
+        assert self.http_client is not None
+        try:
+            depth_resp, k1m_resp = await asyncio.gather(
+                self.http_client.get(
+                    f"{VISION_BASE_URL}/depth",
+                    params={"symbol": raw_pair, "limit": 50},
+                ),
+                self.http_client.get(
+                    f"{VISION_BASE_URL}/klines",
+                    params={"symbol": raw_pair, "interval": "1m", "limit": 2},
+                ),
+            )
+            buy_pct = 50.0
+            taker_pct = 50.0
+            if depth_resp.status_code == 200:
+                d = depth_resp.json()
+                band_low = mark_p * 0.993
+                band_high = mark_p * 1.007
+                b_usd = sum(float(p) * float(q) for p, q in (d.get("bids") or []) if float(p) >= band_low)
+                a_usd = sum(float(p) * float(q) for p, q in (d.get("asks") or []) if float(p) <= band_high)
+                tot = b_usd + a_usd
+                if tot > 0:
+                    buy_pct = (b_usd / tot) * 100.0
+            if k1m_resp.status_code == 200:
+                kl = k1m_resp.json()
+                tot_v = sum(float(k[7]) for k in kl) if kl else 0.0
+                tak_v = sum(float(k[10]) for k in kl) if kl else 0.0
+                if tot_v > 0:
+                    taker_pct = (tak_v / tot_v) * 100.0
+            return {"buy_pressure_pct": round(buy_pct, 1), "taker_buy_pct": round(taker_pct, 1)}
+        except Exception:
+            return {"buy_pressure_pct": 50.0, "taker_buy_pct": 50.0}
 
     async def get_open_positions(self) -> List[Dict[str, Any]]:
         if self.exchange is None:
@@ -726,6 +770,9 @@ class BinanceFuturesExecutor:
                 prices_map = {item["symbol"]: float(item["price"]) for item in resp.json()}
 
                 spot_positions: List[Dict[str, Any]] = []
+                now_sec = time.time()
+                brackets_dirty = False
+
                 for coin, qty in non_zero:
                     raw_pair = f"{coin}USDT"
                     sym_pair = f"{coin}/USDT"
@@ -737,29 +784,68 @@ class BinanceFuturesExecutor:
                         stop_p = float(bkt.get("stop_price") or (entry_p * 0.9965))
                         tp_p = float(bkt.get("take_profit_price") or (entry_p * 1.0055))
                         pos_mode = str(bkt.get("mode") or "SCALP_BOOK")
+                        prev_max = float(bkt.get("max_price") or entry_p)
+                        max_p = max(prev_max, mark_p)
+                        opened_ts = float(bkt.get("opened_at_ts") or now_sec)
 
-                        if sym_pair not in self.real_spot_brackets:
+                        if sym_pair not in self.real_spot_brackets or max_p > prev_max:
                             self.real_spot_brackets[sym_pair] = {
                                 "entry_price": entry_p,
                                 "stop_price": stop_p,
                                 "take_profit_price": tp_p,
                                 "mode": pos_mode,
+                                "max_price": max_p,
+                                "opened_at_ts": opened_ts,
                             }
-                            self.save_brackets()
+                            brackets_dirty = True
 
-                        # Verifica saída automática TP / SL no Spot Real
-                        if (stop_p > 0 and mark_p <= stop_p) or (tp_p > 0 and mark_p >= tp_p):
-                            exit_reason = "TAKE_PROFIT" if (tp_p > 0 and mark_p >= tp_p) else "STOP_LOSS"
+                        pnl = (mark_p - entry_p) * qty
+                        pnl_pct = ((mark_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+                        max_pnl_pct = ((max_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+                        tp_pct = ((tp_p - entry_p) / entry_p * 100.0) if (entry_p > 0 and tp_p > 0) else 0.55
+                        sl_pct = ((entry_p - stop_p) / entry_p * 100.0) if (entry_p > 0 and stop_p > 0) else 0.35
+                        age_min = max(0.0, (now_sec - opened_ts) / 60.0)
+
+                        # Mede o pulso ao vivo do Livro de Ofertas & Tape (1m) desta moeda aberta
+                        mom = await self._check_position_momentum(raw_pair, mark_p)
+                        live_buy_pct = mom["buy_pressure_pct"]
+                        live_taker_pct = mom["taker_buy_pct"]
+
+                        # 1. Verifica saída automática por Alvo TP ou Stop Loss fixo
+                        exit_reason: Optional[str] = None
+                        if tp_p > 0 and mark_p >= tp_p:
+                            exit_reason = "TAKE_PROFIT"
+                        elif stop_p > 0 and mark_p <= stop_p:
+                            exit_reason = "STOP_LOSS"
+                        elif self.auto_momentum_exit:
+                            # 2. Proteção de Lucro no Topo: se já subiu >= +0.25% mas perdeu força e devolveu > 40% do ganho (ou fluxo virou vendedor)
+                            if max_pnl_pct >= 0.25 and (
+                                (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
+                                or (live_buy_pct < 44.0 and live_taker_pct < 45.0 and pnl_pct >= 0.05)
+                            ):
+                                exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
+                            # 3. Virada Brusca de Fluxo no Book + Tape (Paredão Vendedor + Despejo no Tape após 1.5 min)
+                            elif age_min >= 1.5 and live_buy_pct <= 40.0 and live_taker_pct <= 42.0:
+                                exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book Compra={live_buy_pct}% | Tape={live_taker_pct}%)"
+                            # 4. Expiração de Tempo (Estagnação sem força compradora após max_hold_minutes)
+                            elif age_min >= float(self.max_hold_minutes) and (live_buy_pct < 49.0 or live_taker_pct < 47.0):
+                                exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f} min sem romper e fluxo fraco)"
+
+                        if exit_reason is not None:
                             try:
                                 await self.close_spot_position(sym_pair, reason=exit_reason)
                                 continue
                             except Exception as sell_err:
                                 logger.warning(f"[{sym_pair}] Aviso ao executar saída automática Spot ({exit_reason}): {sell_err}")
 
-                        pnl = (mark_p - entry_p) * qty
-                        pnl_pct = ((mark_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
-                        tp_pct = ((tp_p - entry_p) / entry_p * 100.0) if (entry_p > 0 and tp_p > 0) else 0.55
-                        sl_pct = ((entry_p - stop_p) / entry_p * 100.0) if (entry_p > 0 and stop_p > 0) else 0.35
+                        if max_pnl_pct >= 0.25:
+                            mom_status = f"🛡️ PROTEGENDO TOPO (Pico +{max_pnl_pct:.2f}%)"
+                        elif live_buy_pct >= 55.0 and live_taker_pct >= 52.0:
+                            mom_status = f"🟢 MOMENTO FORTE (Book {live_buy_pct:.0f}% | Tape {live_taker_pct:.0f}%)"
+                        elif live_buy_pct <= 44.0 or live_taker_pct <= 45.0:
+                            mom_status = f"🟠 FLUXO FRACO (Book {live_buy_pct:.0f}% | Tape {live_taker_pct:.0f}%)"
+                        else:
+                            mom_status = f"🟡 ESTÁVEL (Book {live_buy_pct:.0f}% | Tape {live_taker_pct:.0f}%)"
 
                         spot_positions.append(
                             {
@@ -770,16 +856,24 @@ class BinanceFuturesExecutor:
                                 "notional_usd": round(notional, 2),
                                 "entry_price": round(entry_p, 6),
                                 "mark_price": mark_p,
+                                "max_price": round(max_p, 6),
                                 "stop_price": round(stop_p, 6),
                                 "take_profit_price": round(tp_p, 6),
                                 "unrealized_pnl": round(pnl, 2),
                                 "pnl_pct": round(pnl_pct, 2),
+                                "max_pnl_pct": round(max_pnl_pct, 2),
                                 "tp_pct": round(tp_pct, 2),
                                 "sl_pct": round(sl_pct, 2),
+                                "age_minutes": round(age_min, 1),
+                                "live_buy_pressure_pct": live_buy_pct,
+                                "live_taker_buy_pct": live_taker_pct,
+                                "momentum_status": mom_status,
                                 "leverage": 1,
                                 "margin_mode": "spot",
                             }
                         )
+                if brackets_dirty:
+                    self.save_brackets()
                 return spot_positions + (await self._update_and_get_shadow_positions())
 
             raw_positions = await self.exchange.fetch_positions()
@@ -866,6 +960,8 @@ class BinanceFuturesExecutor:
                     "stop_price": round(adj_stop, 6),
                     "take_profit_price": round(adj_tp, 6),
                     "mode": mode,
+                    "max_price": float(avg_entry),
+                    "opened_at_ts": time.time(),
                 }
                 self.save_brackets()
 
