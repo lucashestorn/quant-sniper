@@ -407,58 +407,159 @@
         <!-- ÁREA 2 (SEPARADA): TERMINAL SNIPER — VELAS WALK-FORWARD (5m/15m/30m/1h)    -->
         <!-- ========================================================================= -->
         <div id="workspaceSniper" class="space-y-5 hidden">
-            <!-- PAINEL DE PARÂMETROS EM TEMPO REAL (SEM REINICIAR CONTAINER) -->
-            <section class="card-glass rounded-xl p-4">
-                <div class="flex flex-wrap items-center justify-between gap-4">
+            <!-- PAINEL DE ALOCAÇÃO FLEXÍVEL DE CAPITAL E RISCO ENTRE MODALIDADES -->
+            <section class="card-glass rounded-xl p-4 border border-amber-500/30">
+                <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-800">
                     <div class="flex items-center gap-2">
-                        <i data-lucide="settings-2" class="w-4 h-4 text-amber-400"></i>
-                        <h2 class="text-xs font-bold uppercase tracking-wider text-white">Ajuste Rápido de Valores e Risco do Sniper de Velas</h2>
-                        <span class="text-[11px] text-slate-400 hidden sm:inline">— Altere margem em dólares, alavancagem e vagas sem reiniciar</span>
+                        <i data-lucide="scale" class="w-4 h-4 text-amber-400"></i>
+                        <div>
+                            <h2 class="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+                                ⚖️ Alocação Flexível de Capital — Escolha Quanto Alocar em Cada Modalidade
+                            </h2>
+                            <p class="text-[11px] text-slate-400">
+                                Configure independentemente a mão ($) e a quantidade de vagas para <strong>⚡ Scalp</strong>, <strong>🎯 Sniper</strong> e <strong>🚀 Rocket Memes</strong>.
+                            </p>
+                        </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="applyPreset10()" class="px-2.5 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/70 text-[11px] font-semibold text-emerald-300 transition">
-                            Preset Banca $10 ($5.25 × 1x | Max 2)
+                        <button onclick="applyPresetBalanced()" class="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-[11px] font-bold text-amber-300 transition">
+                            ⚖️ Equilibrado ($5.25 cada = $15.75)
                         </button>
-                        <button onclick="applyPreset50()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
-                            Preset Banca $50 ($6.00 × 3x | Max 3)
+                        <button onclick="applyPresetScalpFocus()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
+                            ⚡ Foco Scalp ($6.0 × 2 Vagas)
                         </button>
-                        <button onclick="applyPreset200()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
-                            Preset Banca $200+ ($25.00 × 3x | Max 4)
+                        <button onclick="applyPresetRocketFocus()" class="px-2.5 py-1 rounded bg-purple-950/80 hover:bg-purple-900 border border-purple-700 text-[11px] font-semibold text-purple-300 transition">
+                            🚀 Foco Memes ($6.0 × 2 Vagas)
                         </button>
                     </div>
                 </div>
 
-                <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
-                    <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Margem por Trade ($ USDT)</label>
-                        <input type="number" id="inputMarginUsdt" step="0.5" min="1.0" value="5.25" oninput="updatePreviewNotional()"
-                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
+                <!-- GRADE DAS 3 MODALIDADES -->
+                <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- 1. MODALIDADE SCALP -->
+                    <div class="p-3.5 rounded-xl bg-slate-900/90 border border-amber-500/30 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                                    <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
+                                    ⚡ 1. SCALP LIVRO L2
+                                </span>
+                                <span class="text-[10px] mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-bold" id="badgeScalpAllocState">1 VAGA ATIVA</span>
+                            </div>
+                            <p class="text-[10px] text-slate-400 mb-3">Disparos contínuos a qualquer minuto por desbalanceamento e paredões no book (alvos +0.45% a +0.80%).</p>
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mão por Trade ($)</label>
+                                    <input type="number" id="inputScalpAllocMargin" step="0.25" min="5.0" value="5.25" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-amber-300 focus:outline-none focus:border-amber-400" />
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Vagas Dedicadas</label>
+                                    <input type="number" id="inputScalpAllocSlots" step="1" min="0" max="5" value="1" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-white focus:outline-none focus:border-amber-400" />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                            <span class="text-slate-400 text-[11px]">Subtotal Scalp:</span>
+                            <span class="font-bold text-amber-300" id="subtotalScalp">$5.25 USDT</span>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Alavancagem Isolada (x)</label>
-                        <input type="number" id="inputLeverage" step="1" min="1" max="25" value="1" oninput="updatePreviewNotional()"
-                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
+
+                    <!-- 2. MODALIDADE SNIPER -->
+                    <div class="p-3.5 rounded-xl bg-slate-900/90 border border-sky-500/30 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-black text-sky-300 flex items-center gap-1.5">
+                                    <i data-lucide="crosshair" class="w-3.5 h-3.5 text-sky-400"></i>
+                                    🎯 2. SNIPER DE VELAS
+                                </span>
+                                <span class="text-[10px] mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-bold" id="badgeSniperAllocState">1 VAGA ATIVA</span>
+                            </div>
+                            <p class="text-[10px] text-slate-400 mb-3">Execução estrita no fechamento de vela (:00, :05, :15, :30) para evitar falso rompimento de mercado.</p>
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mão por Trade ($)</label>
+                                    <input type="number" id="inputMarginUsdt" step="0.25" min="5.0" value="5.25" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-sky-300 focus:outline-none focus:border-sky-400" />
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Vagas Dedicadas</label>
+                                    <input type="number" id="inputSniperAllocSlots" step="1" min="0" max="5" value="1" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-white focus:outline-none focus:border-sky-400" />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                            <span class="text-slate-400 text-[11px]">Subtotal Sniper:</span>
+                            <span class="font-bold text-sky-300" id="subtotalSniper">$5.25 USDT</span>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Máx. Posições Simultâneas</label>
-                        <input type="number" id="inputMaxPositions" step="1" min="1" max="15" value="2" oninput="updatePreviewNotional()"
-                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
+
+                    <!-- 3. MODALIDADE ROCKET MEMES -->
+                    <div class="p-3.5 rounded-xl bg-slate-900/90 border border-purple-500/30 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-black text-purple-300 flex items-center gap-1.5">
+                                    <i data-lucide="rocket" class="w-3.5 h-3.5 text-purple-400"></i>
+                                    🚀 3. ROCKET MEMES (10-15%+)
+                                </span>
+                                <span class="text-[10px] mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-bold" id="badgeRocketAllocState">1 VAGA ATIVA</span>
+                            </div>
+                            <p class="text-[10px] text-slate-400 mb-3">Varredura contínua a cada 20s em PEPE, DOGE, SHIB, WIF com Trailing Stop Escadinha.</p>
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mão por Trade ($)</label>
+                                    <input type="number" id="inputRocketAllocMargin" step="0.25" min="5.0" value="5.25" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-purple-300 focus:outline-none focus:border-purple-400" />
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Vagas Dedicadas</label>
+                                    <input type="number" id="inputRocketAllocSlots" step="1" min="0" max="5" value="1" oninput="updateAllocationSummary()"
+                                        class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs mono font-bold text-white focus:outline-none focus:border-purple-400" />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                            <span class="text-slate-400 text-[11px]">Subtotal Memes:</span>
+                            <span class="font-bold text-purple-300" id="subtotalRocket">$5.25 USDT</span>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Profit Factor Mínimo</label>
-                        <input type="number" id="inputMinPf" step="0.05" min="1.10" max="3.00" value="1.35"
-                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
+                </div>
+
+                <!-- BARRA INFERIOR DE CONSOLIDAÇÃO, ALAVANCAGEM & BOTÃO SALVAR -->
+                <div class="mt-4 p-3 rounded-lg bg-slate-950/70 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-4 text-xs mono">
+                        <div>
+                            <span class="text-slate-400">Total Comprometido (Se lotar tudo):</span>
+                            <strong class="text-white text-sm ml-1" id="previewTotalAllocated">$15.75 USDT</strong>
+                        </div>
+                        <div>
+                            <span class="text-slate-400">Saldo Livre Disponível:</span>
+                            <strong class="text-emerald-400 text-sm ml-1" id="previewFreeWallet">$20.61 USDT</strong>
+                        </div>
+                        <div>
+                            <span class="text-slate-400">Margem Livre de Reserva:</span>
+                            <strong class="text-sky-300 text-sm ml-1" id="previewSafetyBuffer">$4.86 USDT</strong>
+                        </div>
                     </div>
-                    <div>
-                        <button onclick="saveRuntimeConfig()" id="btnSaveConfig"
-                            class="w-full py-2 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-1.5 text-[11px] text-slate-400">
+                            <label class="text-slate-400 font-bold">Alavancagem:</label>
+                            <input type="number" id="inputLeverage" step="1" min="1" max="25" value="1" oninput="updateAllocationSummary()"
+                                class="w-14 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-xs mono text-center font-bold text-white focus:outline-none focus:border-amber-500" />
+                            <span class="px-2 py-0.5 rounded bg-slate-800 text-amber-300 text-[10px] font-bold" id="badgeLeverageModeInfo">1x SPOT (À VISTA)</span>
+                        </div>
+                        <button onclick="saveAllocationConfig()" id="btnSaveAllocConfig"
+                            class="py-2 px-5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-black text-xs flex items-center gap-2 transition shadow-lg">
                             <i data-lucide="save" class="w-4 h-4"></i>
-                            <span>Aplicar Agora</span>
+                            <span>Salvar Alocação de Capital</span>
                         </button>
                     </div>
                 </div>
-                <div id="configFeedback" class="mt-2 text-xs mono text-slate-400">
-                    Ordem Nominal Calculada: <strong id="previewNotional" class="text-amber-300">$5.25 USDT</strong> por entrada | Margem Máxima se encher todas as vagas: <strong id="previewMaxMargin" class="text-white">$10.50 USDT</strong>
+                <div class="mt-2 text-[10px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+                    <span>💡 <strong>Por que a Alavancagem é 1x no Spot?</strong> Na Binance Spot você adquire moedas reais à vista sem risco de liquidação. Alavancagem 2x a 50x é recurso exclusivo de <em>Binance Futures (USDT-M)</em>.</span>
+                    <span id="allocFeedback" class="mono text-emerald-400 font-bold"></span>
                 </div>
             </section>
 
@@ -666,6 +767,38 @@
         <!-- ÁREA 4: ABA DE GRÁFICOS & PERFORMANCE (COMPRAS, VENDAS & LINHA DO SALDO)   -->
         <!-- ========================================================================= -->
         <div id="workspaceCharts" class="space-y-5 hidden">
+            <!-- EXPORTAÇÃO DE RELATÓRIOS FINANCEIROS PERIÓDICOS (EXCEL / CSV UTF-8) -->
+            <section class="card-glass rounded-xl p-4 border border-emerald-500/40 bg-gradient-to-r from-slate-900/95 via-slate-900 to-emerald-950/25">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-2 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">
+                            <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+                                📥 Exportar Relatórios Financeiros Periódicos & Auditoria
+                                <span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-bold">CSV / EXCEL UTF-8</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400">
+                                Baixe relatórios detalhados com depósito/base, saldo atual, movimentações, duração, alvos e lucro líquido por modalidade.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <select id="selectReportPeriod" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs font-bold text-white focus:outline-none focus:border-emerald-500 mono">
+                            <option value="day">Hoje / Últimas 24 Horas</option>
+                            <option value="week" selected>Últimos 7 Dias (Semanal)</option>
+                            <option value="month">Últimos 30 Dias (Mensal)</option>
+                            <option value="all">Histórico Completo (Desde o Início)</option>
+                        </select>
+                        <button onclick="downloadPeriodicReport()" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs flex items-center gap-2 shadow-lg transition">
+                            <i data-lucide="download" class="w-4 h-4"></i>
+                            <span>Baixar Relatório (CSV / Excel)</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <!-- CARDS DE PERFORMANCE RESUMIDA -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div class="card-glass rounded-xl p-4 flex flex-col justify-between border border-emerald-500/30">
@@ -1049,42 +1182,132 @@
             }
         }
 
+        let allocFormInitialized = false;
+
+        function downloadPeriodicReport() {
+            const period = document.getElementById('selectReportPeriod')?.value || 'week';
+            window.open(`/api/reports/download?period=${period}`, '_blank');
+        }
+
+        function updateAllocationSummary() {
+            const sMargin = parseFloat(document.getElementById('inputScalpAllocMargin')?.value || 5.25);
+            const sSlots = parseInt(document.getElementById('inputScalpAllocSlots')?.value || 1);
+            const snMargin = parseFloat(document.getElementById('inputMarginUsdt')?.value || 5.25);
+            const snSlots = parseInt(document.getElementById('inputSniperAllocSlots')?.value || 1);
+            const rMargin = parseFloat(document.getElementById('inputRocketAllocMargin')?.value || 5.25);
+            const rSlots = parseInt(document.getElementById('inputRocketAllocSlots')?.value || 1);
+
+            const isSpot = Boolean(!currentStatus || currentStatus.market_type === 'spot');
+            const levInput = document.getElementById('inputLeverage');
+            if (isSpot && levInput && parseInt(levInput.value || 1) > 1) {
+                levInput.value = "1";
+            }
+
+            const subScalp = sMargin * sSlots;
+            const subSniper = snMargin * snSlots;
+            const subRocket = rMargin * rSlots;
+            const totalAlloc = subScalp + subSniper + subRocket;
+
+            const elScalp = document.getElementById('subtotalScalp');
+            if (elScalp) elScalp.innerText = `$${subScalp.toFixed(2)} USDT`;
+            const elSniper = document.getElementById('subtotalSniper');
+            if (elSniper) elSniper.innerText = `$${subSniper.toFixed(2)} USDT`;
+            const elRocket = document.getElementById('subtotalRocket');
+            if (elRocket) elRocket.innerText = `$${subRocket.toFixed(2)} USDT`;
+            const elTotal = document.getElementById('previewTotalAllocated');
+            if (elTotal) elTotal.innerText = `$${totalAlloc.toFixed(2)} USDT`;
+
+            const freeUsdt = Number(currentStatus?.wallet_balance?.free_usdt || currentStatus?.wallet_balance?.total_usdt || 20.61);
+            const elFree = document.getElementById('previewFreeWallet');
+            if (elFree) elFree.innerText = `$${freeUsdt.toFixed(2)} USDT`;
+            const buffer = freeUsdt - totalAlloc;
+            const bufEl = document.getElementById('previewSafetyBuffer');
+            if (bufEl) {
+                bufEl.innerText = `${buffer >= 0 ? '+' : ''}$${buffer.toFixed(2)} USDT`;
+                bufEl.className = buffer >= 0 ? 'text-sky-300 text-sm ml-1' : 'text-rose-400 text-sm ml-1 font-bold';
+            }
+        }
+
+        function applyPresetBalanced() {
+            if (document.getElementById('inputScalpAllocMargin')) document.getElementById('inputScalpAllocMargin').value = "5.25";
+            if (document.getElementById('inputScalpAllocSlots')) document.getElementById('inputScalpAllocSlots').value = "1";
+            if (document.getElementById('inputMarginUsdt')) document.getElementById('inputMarginUsdt').value = "5.25";
+            if (document.getElementById('inputSniperAllocSlots')) document.getElementById('inputSniperAllocSlots').value = "1";
+            if (document.getElementById('inputRocketAllocMargin')) document.getElementById('inputRocketAllocMargin').value = "5.25";
+            if (document.getElementById('inputRocketAllocSlots')) document.getElementById('inputRocketAllocSlots').value = "1";
+            updateAllocationSummary();
+            saveAllocationConfig();
+        }
+
+        function applyPresetScalpFocus() {
+            if (document.getElementById('inputScalpAllocMargin')) document.getElementById('inputScalpAllocMargin').value = "6.00";
+            if (document.getElementById('inputScalpAllocSlots')) document.getElementById('inputScalpAllocSlots').value = "2";
+            if (document.getElementById('inputMarginUsdt')) document.getElementById('inputMarginUsdt').value = "5.25";
+            if (document.getElementById('inputSniperAllocSlots')) document.getElementById('inputSniperAllocSlots').value = "1";
+            if (document.getElementById('inputRocketAllocMargin')) document.getElementById('inputRocketAllocMargin').value = "5.25";
+            if (document.getElementById('inputRocketAllocSlots')) document.getElementById('inputRocketAllocSlots').value = "0";
+            updateAllocationSummary();
+            saveAllocationConfig();
+        }
+
+        function applyPresetRocketFocus() {
+            if (document.getElementById('inputScalpAllocMargin')) document.getElementById('inputScalpAllocMargin').value = "5.25";
+            if (document.getElementById('inputScalpAllocSlots')) document.getElementById('inputScalpAllocSlots').value = "1";
+            if (document.getElementById('inputMarginUsdt')) document.getElementById('inputMarginUsdt').value = "5.25";
+            if (document.getElementById('inputSniperAllocSlots')) document.getElementById('inputSniperAllocSlots').value = "0";
+            if (document.getElementById('inputRocketAllocMargin')) document.getElementById('inputRocketAllocMargin').value = "6.00";
+            if (document.getElementById('inputRocketAllocSlots')) document.getElementById('inputRocketAllocSlots').value = "2";
+            updateAllocationSummary();
+            saveAllocationConfig();
+        }
+
+        async function saveAllocationConfig() {
+            const sMargin = parseFloat(document.getElementById('inputScalpAllocMargin')?.value || 5.25);
+            const sSlots = parseInt(document.getElementById('inputScalpAllocSlots')?.value || 1);
+            const snMargin = parseFloat(document.getElementById('inputMarginUsdt')?.value || 5.25);
+            const snSlots = parseInt(document.getElementById('inputSniperAllocSlots')?.value || 1);
+            const rMargin = parseFloat(document.getElementById('inputRocketAllocMargin')?.value || 5.25);
+            const rSlots = parseInt(document.getElementById('inputRocketAllocSlots')?.value || 1);
+            const isSpot = Boolean(!currentStatus || currentStatus.market_type === 'spot');
+            const lev = isSpot ? 1 : parseInt(document.getElementById('inputLeverage')?.value || 1);
+
+            const btn = document.getElementById('btnSaveAllocConfig');
+            const origHtml = btn.innerHTML;
+            btn.innerText = 'SALVANDO...';
+
+            try {
+                const res = await fetch('/api/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scalp_margin_usdt: sMargin,
+                        max_scalp_positions: sSlots,
+                        order_margin_usdt: snMargin,
+                        max_sniper_positions: snSlots,
+                        rocket_margin_usdt: rMargin,
+                        max_rocket_positions: rSlots,
+                        default_leverage: lev
+                    })
+                });
+                if (res.ok) {
+                    await fetchStatus();
+                    btn.innerText = '✓ ALOCAÇÃO SALVA COM SUCESSO!';
+                    const fb = document.getElementById('allocFeedback');
+                    if (fb) {
+                        fb.innerText = '✓ Vagas e margens alocadas e salvas com sucesso!';
+                        setTimeout(() => { fb.innerText = ''; }, 3500);
+                    }
+                    setTimeout(() => { btn.innerHTML = origHtml; if (window.lucide) lucide.createIcons(); }, 1800);
+                } else {
+                    btn.innerHTML = origHtml;
+                }
+            } catch (e) {
+                btn.innerHTML = origHtml;
+            }
+        }
+
         function updatePreviewNotional() {
-            const margin = parseFloat(document.getElementById('inputMarginUsdt').value || 0);
-            const lev = parseInt(document.getElementById('inputLeverage').value || 1);
-            const maxPos = parseInt(document.getElementById('inputMaxPositions').value || 1);
-            const notional = margin * lev;
-            const maxMargin = margin * maxPos;
-            document.getElementById('previewNotional').innerText = `$${notional.toFixed(2)} USDT`;
-            document.getElementById('previewMaxMargin').innerText = `$${maxMargin.toFixed(2)} USDT`;
-        }
-
-        function applyPreset10() {
-            const isSpot = (currentStatus && currentStatus.market_type === 'spot');
-            document.getElementById('inputMarginUsdt').value = isSpot ? "5.25" : "2.5";
-            document.getElementById('inputLeverage').value = isSpot ? "1" : "3";
-            document.getElementById('inputMaxPositions').value = "2";
-            document.getElementById('inputMinPf').value = "1.35";
-            updatePreviewNotional();
-            saveRuntimeConfig();
-        }
-
-        function applyPreset50() {
-            document.getElementById('inputMarginUsdt').value = "6.0";
-            document.getElementById('inputLeverage').value = "3";
-            document.getElementById('inputMaxPositions').value = "3";
-            document.getElementById('inputMinPf').value = "1.35";
-            updatePreviewNotional();
-            saveRuntimeConfig();
-        }
-
-        function applyPreset200() {
-            document.getElementById('inputMarginUsdt').value = "25.0";
-            document.getElementById('inputLeverage').value = "3";
-            document.getElementById('inputMaxPositions').value = "4";
-            document.getElementById('inputMinPf').value = "1.35";
-            updatePreviewNotional();
-            saveRuntimeConfig();
+            updateAllocationSummary();
         }
 
         function updateCountdown() {
@@ -1201,24 +1424,60 @@
                 }
             }
 
-            // Order Sizing KPI
-            const margin = Number(data.order_margin_usdt || 2.5);
-            const lev = Number(data.default_leverage || 3);
+            // Order Sizing KPI & Mode
+            const isSpot = Boolean(!data.market_type || data.market_type === 'spot');
+            const lev = isSpot ? 1 : Number(data.default_leverage || 1);
+            const margin = Number(data.order_margin_usdt || 5.25);
             const notional = margin * lev;
             document.getElementById('kpiMarginUsdt').innerText = `$${margin.toFixed(2)}`;
-            document.getElementById('kpiLeverageBadge').innerText = `${lev}x ISOLADO`;
+            document.getElementById('kpiLeverageBadge').innerText = isSpot ? '1x SPOT (À VISTA)' : `${lev}x ISOLADO`;
             document.getElementById('kpiNotionalUsdt').innerText = `$${notional.toFixed(2)}`;
             document.getElementById('kpiMaxMarginTotal').innerText = `$${(margin * maxPos).toFixed(2)}`;
 
-            if (!formInitialized) {
-                document.getElementById('inputMarginUsdt').value = margin;
-                document.getElementById('inputLeverage').value = lev;
-                document.getElementById('inputMaxPositions').value = maxPos;
-                document.getElementById('inputMinPf').value = data.min_profit_factor || 1.35;
-                document.getElementById('modalTestnet').value = String(Boolean(data.testnet));
-                updatePreviewNotional();
-                formInitialized = true;
+            const badgeLevInfo = document.getElementById('badgeLeverageModeInfo');
+            if (badgeLevInfo) {
+                badgeLevInfo.innerText = isSpot ? '1x SPOT (À VISTA)' : `${lev}x FUTURES`;
             }
+
+            const inpLev = document.getElementById('inputLeverage');
+            if (inpLev) {
+                inpLev.value = isSpot ? 1 : lev;
+            }
+
+            // Sincroniza formulário de alocação de capital
+            if (!allocFormInitialized) {
+                const inpScalpMargin = document.getElementById('inputScalpAllocMargin');
+                if (inpScalpMargin) inpScalpMargin.value = Number(data.scalp_margin_usdt || 5.25).toFixed(2);
+                const inpScalpSlots = document.getElementById('inputScalpAllocSlots');
+                if (inpScalpSlots) inpScalpSlots.value = Number(data.max_scalp_positions || 1);
+
+                const inpSniperMargin = document.getElementById('inputMarginUsdt');
+                if (inpSniperMargin) inpSniperMargin.value = Number(data.order_margin_usdt || 5.25).toFixed(2);
+                const inpSniperSlots = document.getElementById('inputSniperAllocSlots');
+                if (inpSniperSlots) inpSniperSlots.value = Number(data.max_sniper_positions || 1);
+
+                const inpRocketMargin = document.getElementById('inputRocketAllocMargin');
+                if (inpRocketMargin) inpRocketMargin.value = Number(data.rocket_margin_usdt || 5.25).toFixed(2);
+                const inpRocketSlots = document.getElementById('inputRocketAllocSlots');
+                if (inpRocketSlots) inpRocketSlots.value = Number(data.max_rocket_positions || 1);
+
+                document.getElementById('modalTestnet').value = String(Boolean(data.testnet));
+                allocFormInitialized = true;
+                updateAllocationSummary();
+            }
+
+            // Atualiza badges das vagas por modalidade
+            const maxRocket = Number(data.max_rocket_positions !== undefined ? data.max_rocket_positions : 1);
+            const rocketCount = Number(data.rocket_positions_count !== undefined ? data.rocket_positions_count : openPos.filter(p => (p.mode || '').includes('ROCKET')).length);
+
+            const bScalp = document.getElementById('badgeScalpAllocState');
+            if (bScalp) bScalp.innerText = `${scalpCount}/${maxScalp} VAGA(S) ATIVA(S)`;
+            const bSniper = document.getElementById('badgeSniperAllocState');
+            if (bSniper) bSniper.innerText = `${sniperCount}/${maxSniper} VAGA(S) ATIVA(S)`;
+            const bRocket = document.getElementById('badgeRocketAllocState');
+            if (bRocket) bRocket.innerText = `${rocketCount}/${maxRocket} VAGA(S) ATIVA(S)`;
+
+            updateAllocationSummary();
 
             if (!scalpFormInitialized && data.scalp_tp_pct !== undefined) {
                 document.getElementById('inputScalpTpPct').value = Number(data.scalp_tp_pct || 0.50).toFixed(2);
@@ -2000,9 +2259,16 @@
                 const askWallK = (Number(item.ask_wall_usd || 0) / 1000).toFixed(1);
 
                 let regimeBadge = 'bg-slate-800 text-slate-300 border-slate-700';
-                if (item.regime.includes('FORTE ABSORÇÃO')) regimeBadge = 'bg-emerald-950 text-emerald-300 border-emerald-700 font-bold';
+                if (item.regime.includes('ANTECIPAÇÃO')) regimeBadge = 'bg-cyan-950 text-cyan-300 border-cyan-500 font-black animate-pulse shadow-md';
+                else if (item.regime.includes('FORTE ABSORÇÃO')) regimeBadge = 'bg-emerald-950 text-emerald-300 border-emerald-700 font-bold';
                 else if (item.regime.includes('DEMANDA DOMINANTE')) regimeBadge = 'bg-blue-950 text-blue-300 border-blue-700 font-bold';
+                else if (item.regime.includes('EXAUSTÃO') || item.regime.includes('TOPO')) regimeBadge = 'bg-amber-950 text-amber-300 border-amber-700 font-bold';
                 else if (item.regime.includes('VENDEDORA')) regimeBadge = 'bg-rose-950/70 text-rose-300 border-rose-800';
+
+                const btnLabel = item.is_anticipation ? '🎯 Antecipar' : (item.signal_ready ? '⚡ Scalp' : '⚡ Scalp');
+                const btnClass = item.is_anticipation
+                    ? 'bg-cyan-500 hover:bg-cyan-400 text-black font-black shadow-lg animate-pulse'
+                    : (item.signal_ready ? 'bg-amber-500 hover:bg-amber-400 text-black font-extrabold shadow' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700');
 
                 return `
                     <tr class="hover:bg-slate-800/40">
@@ -2043,8 +2309,8 @@
                         </td>
                         <td class="py-2 px-2 text-right">
                             <button onclick="fireOrderbookScalp('${item.symbol}', ${item.entry_price}, ${item.stop_price}, ${item.take_profit_price})"
-                                class="px-2.5 py-1 rounded text-[11px] font-extrabold transition ${item.signal_ready ? 'bg-amber-500 hover:bg-amber-400 text-black shadow' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}">
-                                ⚡ Scalp
+                                class="px-2.5 py-1 rounded text-[11px] transition ${btnClass}">
+                                ${btnLabel}
                             </button>
                         </td>
                     </tr>

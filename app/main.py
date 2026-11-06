@@ -48,7 +48,10 @@ class ToggleRequest(BaseModel):
     max_concurrent_positions: Optional[int] = None
     max_sniper_positions: Optional[int] = None
     max_scalp_positions: Optional[int] = None
+    max_rocket_positions: Optional[int] = None
     order_margin_usdt: Optional[float] = None
+    scalp_margin_usdt: Optional[float] = None
+    rocket_margin_usdt: Optional[float] = None
     default_leverage: Optional[int] = None
     min_profit_factor: Optional[float] = None
     lookback_days: Optional[int] = None
@@ -651,6 +654,177 @@ async def get_status() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/reports/download")
+async def download_report(period: str = "all") -> Response:
+    """
+    Gera e exporta relatório financeiro completo em formato CSV compatível com Excel (UTF-8 BOM).
+    Suporta filtros por período:
+      - 'day': Hoje / Últimas 24 horas
+      - 'week': Semanal / Últimos 7 dias
+      - 'month': Mensal / Últimos 30 dias
+      - 'all': Histórico completo
+    Inclui:
+      - Resumo consolidado (depósito/base, saldo atual, lucro líquido, win rate)
+      - Distribuição de PnL por modalidade (Scalp, Sniper, Memes)
+      - Posições abertas no momento
+      - Histórico linha a linha de compras e vendas com duração, alvos e motivos de saída
+    """
+    import io
+    import csv
+
+    now_utc = datetime.now(timezone.utc)
+    now_ts = now_utc.timestamp()
+
+    period_lower = period.lower().strip()
+    if period_lower == "day":
+        cutoff_ts = now_ts - 86400.0
+        period_label = "Hoje / Últimas 24 Horas"
+    elif period_lower == "week":
+        cutoff_ts = now_ts - (7 * 86400.0)
+        period_label = "Últimos 7 Dias (Semanal)"
+    elif period_lower == "month":
+        cutoff_ts = now_ts - (30 * 86400.0)
+        period_label = "Últimos 30 Dias (Mensal)"
+    else:
+        cutoff_ts = 0.0
+        period_label = "Histórico Completo"
+
+    all_closed = list(executor.closed_trades)
+    filtered_trades = [
+        t for t in all_closed
+        if float(t.get("timestamp_ts", 0.0)) >= cutoff_ts
+    ]
+
+    total_trades = len(filtered_trades)
+    wins = [t for t in filtered_trades if float(t.get("realized_pnl", 0.0)) > 0]
+    breakeven_or_loss = [t for t in filtered_trades if float(t.get("realized_pnl", 0.0)) <= 0]
+    win_rate = (len(wins) / total_trades * 100.0) if total_trades > 0 else 0.0
+    net_pnl = sum(float(t.get("realized_pnl", 0.0)) for t in filtered_trades)
+    total_volume_traded = sum(float(t.get("received_usdt", 0.0)) for t in filtered_trades)
+
+    scalp_trades = [t for t in filtered_trades if "SCALP" in str(t.get("mode", "")).upper()]
+    scalp_pnl = sum(float(t.get("realized_pnl", 0.0)) for t in scalp_trades)
+
+    sniper_trades = [t for t in filtered_trades if "SNIPER" in str(t.get("mode", "")).upper()]
+    sniper_pnl = sum(float(t.get("realized_pnl", 0.0)) for t in sniper_trades)
+
+    rocket_trades = [t for t in filtered_trades if "ROCKET" in str(t.get("mode", "")).upper()]
+    rocket_pnl = sum(float(t.get("realized_pnl", 0.0)) for t in rocket_trades)
+
+    wallet = await executor.get_wallet_balance()
+    current_balance = float(wallet.get("total_usdt") or 0.0)
+    free_balance = float(wallet.get("free_usdt") or 0.0)
+    open_positions = await executor.get_open_positions()
+    in_positions_val = sum(float(p.get("notional") or 0.0) for p in open_positions)
+
+    estimated_start_balance = current_balance - net_pnl
+    return_on_portfolio = (net_pnl / estimated_start_balance * 100.0) if estimated_start_balance > 0 else 0.0
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+
+    writer.writerow(["RELATÓRIO FINANCEIRO & AUDITORIA DE OPERAÇÕES - QUANT SNIPER BINANCE"])
+    writer.writerow(["Gerado em (UTC)", now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")])
+    writer.writerow(["Período Selecionado", period_label])
+    writer.writerow(["Modo de Operação", f"{executor.market_type.upper()} ({'Testnet' if executor.testnet else 'Binance Oficial Ao Vivo'})"])
+    writer.writerow([])
+
+    writer.writerow(["--- RESUMO CONSOLIDADO DO PERÍODO ---"])
+    writer.writerow(["Métrica", "Valor"])
+    writer.writerow(["Saldo Total Atual da Carteira", f"${current_balance:.2f} USDT"])
+    writer.writerow(["Saldo Livre para Novas Operações", f"${free_balance:.2f} USDT"])
+    writer.writerow(["Capital Alocado em Posições Abertas", f"${in_positions_val:.2f} USDT"])
+    writer.writerow(["Saldo Inicial / Base Estimada do Período", f"${estimated_start_balance:.2f} USDT"])
+    writer.writerow(["Lucro Líquido Realizado no Período", f"{'+' if net_pnl >= 0 else ''}${net_pnl:.4f} USDT"])
+    writer.writerow(["Retorno Percentual sobre a Carteira", f"{'+' if return_on_portfolio >= 0 else ''}{return_on_portfolio:.2f}%"])
+    writer.writerow(["Total de Operações Encerradas", total_trades])
+    writer.writerow(["Operações Lucrativas (Green)", len(wins)])
+    writer.writerow(["Operações 0-0 ou Stop (Loss/BE)", len(breakeven_or_loss)])
+    writer.writerow(["Taxa de Acerto (Win Rate)", f"{win_rate:.1f}%"])
+    writer.writerow(["Volume Total Negociado (Notional)", f"${total_volume_traded:.2f} USDT"])
+    writer.writerow(["Lucro Scalp Book L2", f"{'+' if scalp_pnl >= 0 else ''}${scalp_pnl:.4f} USDT ({len(scalp_trades)} trades)"])
+    writer.writerow(["Lucro Sniper Swing Trades", f"{'+' if sniper_pnl >= 0 else ''}${sniper_pnl:.4f} USDT ({len(sniper_trades)} trades)"])
+    writer.writerow(["Lucro Rocket Memes", f"{'+' if rocket_pnl >= 0 else ''}${rocket_pnl:.4f} USDT ({len(rocket_trades)} trades)"])
+    writer.writerow([])
+
+    writer.writerow(["--- POSIÇÕES EM ABERTO NO MOMENTO ---"])
+    if open_positions:
+        writer.writerow([
+            "Ativo",
+            "Modalidade",
+            "Prazo / Horizonte",
+            "Direção",
+            "Preço Entrada",
+            "Preço Atual",
+            "Stop Loss",
+            "Take Profit",
+            "Notional (USDT)",
+            "PnL Não Realizado ($)",
+            "PnL Flutuante (%)",
+        ])
+        for p in open_positions:
+            writer.writerow([
+                p.get("symbol", ""),
+                p.get("mode", ""),
+                p.get("horizon", "Swing"),
+                p.get("direction", "LONG"),
+                f"{float(p.get('entry_price', 0)):.6f}",
+                f"{float(p.get('current_price', 0)):.6f}",
+                f"{float(p.get('stop_price', 0)):.6f}",
+                f"{float(p.get('take_profit_price', 0)):.6f}",
+                f"${float(p.get('notional', 0)):.2f}",
+                f"${float(p.get('unrealized_pnl', 0)):.4f}",
+                f"{float(p.get('pnl_percentage', 0)):.2f}%",
+            ])
+    else:
+        writer.writerow(["Nenhuma posição em aberto no momento."])
+    writer.writerow([])
+
+    writer.writerow(["--- DETALHAMENTO DE OPERAÇÕES FECHADAS (COMPRA E VENDA) ---"])
+    writer.writerow([
+        "ID Operação",
+        "Data/Hora Encerramento (UTC)",
+        "Ativo",
+        "Modalidade",
+        "Prazo / Horizonte",
+        "Lado",
+        "Preço Entrada",
+        "Preço Saída",
+        "Quantidade Vendida",
+        "Volume Notional (USDT)",
+        "Lucro/Prejuízo Líquido (USDT)",
+        "Resultado (%)",
+        "Duração (Minutos)",
+        "Gatilho de Saída / Motivo",
+    ])
+
+    for t in filtered_trades:
+        writer.writerow([
+            t.get("id", ""),
+            t.get("timestamp_utc", ""),
+            t.get("symbol", ""),
+            t.get("mode", ""),
+            t.get("horizon", "Minutos"),
+            t.get("direction", "LONG"),
+            f"{float(t.get('entry_price', 0)):.6f}",
+            f"{float(t.get('exit_price', 0)):.6f}",
+            f"{float(t.get('sold_qty', 0)):.6f}",
+            f"${float(t.get('received_usdt', 0)):.2f}",
+            f"{'+' if float(t.get('realized_pnl', 0)) >= 0 else ''}${float(t.get('realized_pnl', 0)):.4f}",
+            f"{'+' if float(t.get('pnl_pct', 0)) >= 0 else ''}{float(t.get('pnl_pct', 0)):.2f}%",
+            f"{float(t.get('duration_minutes', 0)):.1f}",
+            t.get("reason", ""),
+        ])
+
+    csv_data = "\ufeff" + output.getvalue()
+    filename = f"relatorio_quant_sniper_{period_lower}_{now_utc.strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=csv_data.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/api/toggle")
 async def toggle_bot(
     payload: Optional[ToggleRequest] = Body(default=None),
@@ -682,24 +856,41 @@ async def toggle_bot(
             changes.append(f"Margem=${executor.order_margin_usdt:.2f}")
 
         if payload.default_leverage is not None:
-            executor.default_leverage = (
-                1 if executor.market_type == "spot" else max(1, min(50, int(payload.default_leverage)))
-            )
-            changes.append(f"Alavancagem={executor.default_leverage}x")
+            raw_lev = int(payload.default_leverage)
+            if executor.market_type == "spot" and raw_lev > 1:
+                executor.default_leverage = 1
+                changes.append("Alavancagem mantida em 1x (Modo SPOT direto não suporta alavancagem; use FUTURES para 2x+)")
+            else:
+                executor.default_leverage = 1 if executor.market_type == "spot" else max(1, min(50, raw_lev))
+                changes.append(f"Alavancagem={executor.default_leverage}x")
+
+        if payload.scalp_margin_usdt is not None:
+            state.scalp_margin_usdt = max(1.0, float(payload.scalp_margin_usdt))
+            changes.append(f"MargemScalp=${state.scalp_margin_usdt:.2f}")
+
+        if payload.rocket_margin_usdt is not None:
+            state.rocket_margin_usdt = max(1.0, float(payload.rocket_margin_usdt))
+            changes.append(f"MargemRocket=${state.rocket_margin_usdt:.2f}")
+
+        if payload.max_rocket_positions is not None:
+            state.max_rocket_positions = max(0, min(10, int(payload.max_rocket_positions)))
+            changes.append(f"VagasRocket={state.max_rocket_positions}")
+
+        if payload.max_sniper_positions is not None:
+            state.max_sniper_positions = max(0, min(10, int(payload.max_sniper_positions)))
+            changes.append(f"VagasSniper={state.max_sniper_positions}")
+
+        if payload.max_scalp_positions is not None:
+            state.max_scalp_positions = max(0, min(10, int(payload.max_scalp_positions)))
+            changes.append(f"VagasScalp={state.max_scalp_positions}")
 
         if payload.max_concurrent_positions is not None:
             state.max_concurrent_positions = max(1, int(payload.max_concurrent_positions))
             changes.append(f"MaxPos={state.max_concurrent_positions}")
-
-        if payload.max_sniper_positions is not None:
-            state.max_sniper_positions = max(1, min(10, int(payload.max_sniper_positions)))
-            state.max_concurrent_positions = state.max_scalp_positions + state.max_sniper_positions
-            changes.append(f"VagasSniper={state.max_sniper_positions}")
-
-        if payload.max_scalp_positions is not None:
-            state.max_scalp_positions = max(1, min(10, int(payload.max_scalp_positions)))
-            state.max_concurrent_positions = state.max_scalp_positions + state.max_sniper_positions
-            changes.append(f"VagasScalp={state.max_scalp_positions}")
+        else:
+            state.max_concurrent_positions = (
+                state.max_scalp_positions + state.max_sniper_positions + state.max_rocket_positions
+            )
 
         if payload.min_profit_factor is not None:
             new_pf = max(1.05, float(payload.min_profit_factor))
@@ -784,8 +975,15 @@ async def toggle_bot(
         "max_concurrent_positions": state.max_concurrent_positions,
         "max_scalp_positions": state.max_scalp_positions,
         "max_sniper_positions": state.max_sniper_positions,
+        "max_rocket_positions": state.max_rocket_positions,
+        "scalp_margin_usdt": state.scalp_margin_usdt,
+        "rocket_margin_usdt": state.rocket_margin_usdt,
+        "rocket_tp_target_pct": state.rocket_tp_target_pct,
+        "rocket_sl_pct": state.rocket_sl_pct,
+        "rocket_auto_enabled": state.rocket_auto_enabled,
         "scalp_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]),
         "sniper_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]),
+        "rocket_positions_count": len([p for p in state.open_positions if p.get("mode") in ("ROCKET_MEME", "ROCKET")]),
         "min_profit_factor": state.min_profit_factor,
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,

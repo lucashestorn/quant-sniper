@@ -68,5 +68,35 @@
     "sniper_pnl": 0.0,
     "rocket_pnl": 0.0,
     "last_event": "Venda BNB/USDT (MOMENTO_PASSOU_FLUXO_VIROU (Book Compra=33.0% | Tape=33.3%)): -0.00$ (-0.04%)"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:08:10 UTC",
+    "timestamp_ts": 1793930890.6968853,
+    "time_label": "02:08",
+    "total_usdt": 18.5,
+    "scalp_pnl": -0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra BTC/USDT [LONG @ 76040.0500]"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:15:49 UTC",
+    "timestamp_ts": 1793931349.294971,
+    "time_label": "02:15",
+    "total_usdt": 18.5,
+    "scalp_pnl": -0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Venda BTC/USDT (MOMENTO_PASSOU_FLUXO_VIROU (Book Compra=19.4% | Tape=42.0%)): +0.00$ (+0.07%)"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:17:39 UTC",
+    "timestamp_ts": 1793931459.8272123,
+    "time_label": "02:17",
+    "total_usdt": 18.5,
+    "scalp_pnl": -0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra UNI/USDT [LONG @ 6.9630]"
   }
 ]

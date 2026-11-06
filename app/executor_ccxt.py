@@ -1504,17 +1504,35 @@ class BinanceFuturesExecutor:
 
                 # Score de Confluência Order Book + Tape Reading (0 a 100)
                 scalp_score = round((buy_pressure_pct * 0.58) + (taker_buy_pct * 0.42), 1)
-                signal_ready = bool(
-                    buy_pressure_pct >= 57.5
-                    and taker_buy_pct >= 52.0
-                    and spread_pct <= 0.06
+
+                # Regime de Antecipação Institucional:
+                # Ocorre quando há forte muralha compradora no suporte (Bids >= 61%), mas a manada ainda
+                # não comprou à mercado (Taker Buy <= 55%). Permite comprar NO FUNDO antes do topo!
+                is_anticipation = bool(
+                    buy_pressure_pct >= 61.0
+                    and taker_buy_pct <= 55.0
+                    and spread_pct <= 0.05
                     and net_target_pct >= 0.25
                 )
 
-                if buy_pressure_pct >= 63.0 and taker_buy_pct >= 55.0:
-                    regime = "FORTE ABSORÇÃO COMPRADORA"
+                signal_ready = bool(
+                    (
+                        buy_pressure_pct >= 57.5
+                        and taker_buy_pct >= 52.0
+                        and spread_pct <= 0.06
+                        and net_target_pct >= 0.25
+                    )
+                    or is_anticipation
+                )
+
+                if is_anticipation:
+                    regime = "🎯 ANTECIPAÇÃO (Muralha Compradora no Fundo)"
+                elif buy_pressure_pct >= 64.0 and taker_buy_pct >= 55.0:
+                    regime = "🔥 FORTE ABSORÇÃO COMPRADORA"
                 elif signal_ready:
                     regime = "DEMANDA DOMINANTE (GATILHO)"
+                elif taker_buy_pct >= 65.0 and buy_pressure_pct < 48.0:
+                    regime = "⚠️ POSSÍVEL TOPO / EXAUSTÃO"
                 elif buy_pressure_pct <= 42.0:
                     regime = "PRESSÃO VENDEDORA (EVITAR)"
                 else:
@@ -1542,6 +1560,7 @@ class BinanceFuturesExecutor:
                     "net_target_pct": round(net_target_pct, 2),
                     "scalp_score": scalp_score,
                     "signal_ready": signal_ready,
+                    "is_anticipation": is_anticipation,
                     "regime": regime,
                 }
             except Exception as exc:
