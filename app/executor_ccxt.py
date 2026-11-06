@@ -13,10 +13,13 @@ Resolve em código:
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal, ROUND_DOWN
 import hashlib
 import hmac
+import json
 import logging
 import os
+from pathlib import Path
 import time
 import urllib.parse
 from typing import Any, Dict, List, Optional
@@ -25,6 +28,8 @@ import ccxt.async_support as ccxt
 import httpx
 
 logger = logging.getLogger("quant_sniper.executor_ccxt")
+
+BRACKETS_FILE_PATH = Path(__file__).parent.parent / "real_spot_brackets.json"
 
 TIMEFRAME_MS: Dict[str, int] = {
     "1m": 60_000,
@@ -36,7 +41,7 @@ TIMEFRAME_MS: Dict[str, int] = {
     "1d": 86_400_000,
 }
 
-STABLECOINS_IGNORE = {"USDT", "USDC", "FDUSD", "BUSD", "TUSD", "BRL", "DAI", "USDP", "EUR"}
+STABLECOINS_IGNORE = {"USDT", "USDC", "FDUSD", "BUSD", "TUSD", "BRL", "DAI", "USDP", "EUR", "USD1", "U", "USDE", "RLUSD", "PYUSD"}
 VISION_BASE_URL = "https://data-api.binance.vision/api/v3"
 LIVE_SPOT_BASE_URLS = [
     "https://api.binance.com/api/v3",
@@ -101,6 +106,7 @@ class BinanceFuturesExecutor:
         self.exchange: Optional[ccxt.Exchange] = None
         self.http_client: Optional[httpx.AsyncClient] = None
         self._spot_limits_cache: Dict[str, float] = {}
+        self._step_size_cache: Dict[str, str] = {}
         self.last_auth_error: Optional[str] = None
         self._sem = asyncio.Semaphore(10)
 
@@ -112,8 +118,25 @@ class BinanceFuturesExecutor:
         self.shadow_mode_active: bool = False
         self.shadow_usdt_free: float = float(os.getenv("INITIAL_SHADOW_USDT", "10.0"))
         self.shadow_positions: Dict[str, Dict[str, Any]] = {}
-        # Rastreamento de Entrada, Stop Loss e Take Profit para posições Reais Spot
-        self.real_spot_brackets: Dict[str, Dict[str, float]] = {}
+        # Rastreamento persistente de Entrada, Stop Loss e Take Profit para posições Reais Spot
+        self.real_spot_brackets: Dict[str, Dict[str, Any]] = self._load_brackets()
+
+    def _load_brackets(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            if BRACKETS_FILE_PATH.exists():
+                return json.loads(BRACKETS_FILE_PATH.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug(f"Aviso ao carregar real_spot_brackets.json: {exc}")
+        return {}
+
+    def save_brackets(self) -> None:
+        try:
+            BRACKETS_FILE_PATH.write_text(
+                json.dumps(self.real_spot_brackets, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug(f"Aviso ao salvar real_spot_brackets.json: {exc}")
 
     async def _sync_server_time(self, force: bool = False) -> None:
         """Sincroniza o offset em milissegundos com o relógio oficial da Binance."""
@@ -547,6 +570,133 @@ class BinanceFuturesExecutor:
 
         return active_list
 
+    async def _get_step_size(self, raw_pair: str) -> str:
+        if raw_pair in self._step_size_cache:
+            return self._step_size_cache[raw_pair]
+        if self.http_client is None:
+            await self.initialize()
+        assert self.http_client is not None
+        try:
+            resp = await self.http_client.get(
+                f"{VISION_BASE_URL}/exchangeInfo",
+                params={"symbol": raw_pair},
+            )
+            if resp.status_code == 200:
+                symbols_info = resp.json().get("symbols") or []
+                if symbols_info:
+                    for flt in symbols_info[0].get("filters") or []:
+                        if flt.get("filterType") == "LOT_SIZE":
+                            step = str(flt.get("stepSize") or "0.000001")
+                            self._step_size_cache[raw_pair] = step
+                            return step
+        except Exception as exc:
+            logger.debug(f"Aviso ao buscar stepSize de {raw_pair}: {exc}")
+        return "0.000001"
+
+    @staticmethod
+    def _floor_to_step(qty: float, step_str: str) -> str:
+        d_qty = Decimal(str(qty))
+        d_step = Decimal(step_str)
+        if d_step <= 0:
+            return f"{qty:.6f}"
+        floored = (d_qty // d_step) * d_step
+        return format(floored.normalize(), "f")
+
+    async def close_spot_position(self, symbol: str, reason: str = "MANUAL") -> Dict[str, Any]:
+        """
+        Vende 100% da posição aberta de `symbol` a mercado para USDT (Spot ou Shadow),
+        respeitando `LOT_SIZE.stepSize` mesmo quando o valor nocional é ~$4.80-$4.95.
+        """
+        if self.exchange is None:
+            await self.initialize()
+        assert self.http_client is not None
+
+        sym_pair = symbol.split(":")[0]
+        if "/" not in sym_pair and sym_pair.endswith("USDT"):
+            sym_pair = f"{sym_pair[:-4]}/USDT"
+        coin = sym_pair.split("/")[0]
+        raw_pair = sym_pair.replace("/", "")
+
+        if sym_pair in self.shadow_positions:
+            pos = self.shadow_positions.pop(sym_pair)
+            qty = float(pos.get("contracts") or 0.0)
+            mark_p = float(pos.get("mark_price") or pos.get("entry_price") or 0.0)
+            exit_val = qty * mark_p * (1.0 - 0.0011)
+            self.shadow_usdt_free += exit_val
+            return {
+                "symbol": sym_pair,
+                "reason": reason,
+                "sold_qty": round(qty, 6),
+                "received_usdt": round(exit_val, 2),
+                "exit_price": round(mark_p, 6),
+            }
+
+        acc = await self._spot_signed_request("GET", "/account")
+        balances = acc.get("balances") or []
+        free_qty = 0.0
+        for b in balances:
+            if str(b.get("asset")) == coin:
+                free_qty = float(b.get("free") or 0.0)
+                break
+
+        if free_qty <= 0:
+            self.real_spot_brackets.pop(sym_pair, None)
+            self.save_brackets()
+            raise RuntimeError(f"Saldo livre de {coin} já está zerado.")
+
+        step_str = await self._get_step_size(raw_pair)
+        formatted_qty = self._floor_to_step(free_qty, step_str)
+
+        try:
+            sell_res = await self._spot_signed_request(
+                "POST",
+                "/order",
+                {
+                    "symbol": raw_pair,
+                    "side": "SELL",
+                    "type": "MARKET",
+                    "quantity": formatted_qty,
+                },
+            )
+        except Exception:
+            # Fallback via quoteOrderQty se necessário
+            resp_p = await self.http_client.get(f"{VISION_BASE_URL}/ticker/price", params={"symbol": raw_pair})
+            cur_p = float(resp_p.json().get("price") or 0.0)
+            notional_est = free_qty * cur_p * 0.992
+            sell_res = await self._spot_signed_request(
+                "POST",
+                "/order",
+                {
+                    "symbol": raw_pair,
+                    "side": "SELL",
+                    "type": "MARKET",
+                    "quoteOrderQty": f"{notional_est:.2f}",
+                },
+            )
+
+        executed_qty = float(sell_res.get("executedQty") or formatted_qty)
+        received_usdt = float(sell_res.get("cummulativeQuoteQty") or 0.0)
+        avg_exit = (received_usdt / executed_qty) if executed_qty > 0 else 0.0
+
+        bkt = self.real_spot_brackets.pop(sym_pair, {})
+        self.save_brackets()
+        entry_p = float(bkt.get("entry_price") or avg_exit)
+        realized_pnl = (avg_exit - entry_p) * executed_qty
+
+        logger.info(
+            f"[{sym_pair}] [SPOT SELL {reason}] Vendido {executed_qty} {coin} -> ${received_usdt:.2f} USDT @ {avg_exit:.6f} (PnL: ${realized_pnl:+.2f})"
+        )
+        return {
+            "symbol": sym_pair,
+            "reason": reason,
+            "order_id": sell_res.get("orderId"),
+            "sold_qty": round(executed_qty, 6),
+            "received_usdt": round(received_usdt, 2),
+            "entry_price": round(entry_p, 6),
+            "exit_price": round(avg_exit, 6),
+            "realized_pnl": round(realized_pnl, 2),
+        }
+
     async def get_open_positions(self) -> List[Dict[str, Any]]:
         if self.exchange is None:
             await self.initialize()
@@ -584,42 +734,48 @@ class BinanceFuturesExecutor:
                     if notional >= 4.0:
                         bkt = self.real_spot_brackets.get(sym_pair, {})
                         entry_p = float(bkt.get("entry_price") or mark_p)
-                        stop_p = float(bkt.get("stop_price") or 0.0)
-                        tp_p = float(bkt.get("take_profit_price") or 0.0)
+                        stop_p = float(bkt.get("stop_price") or (entry_p * 0.9965))
+                        tp_p = float(bkt.get("take_profit_price") or (entry_p * 1.0055))
+                        pos_mode = str(bkt.get("mode") or "SCALP_BOOK")
+
+                        if sym_pair not in self.real_spot_brackets:
+                            self.real_spot_brackets[sym_pair] = {
+                                "entry_price": entry_p,
+                                "stop_price": stop_p,
+                                "take_profit_price": tp_p,
+                                "mode": pos_mode,
+                            }
+                            self.save_brackets()
 
                         # Verifica saída automática TP / SL no Spot Real
                         if (stop_p > 0 and mark_p <= stop_p) or (tp_p > 0 and mark_p >= tp_p):
+                            exit_reason = "TAKE_PROFIT" if (tp_p > 0 and mark_p >= tp_p) else "STOP_LOSS"
                             try:
-                                logger.info(
-                                    f"[{sym_pair}] [SPOT EXIT] Alvo/Stop atingido (mark={mark_p} | SL={stop_p} | TP={tp_p}). Vendendo a mercado para USDT..."
-                                )
-                                await self._spot_signed_request(
-                                    "POST",
-                                    "/order",
-                                    {
-                                        "symbol": raw_pair,
-                                        "side": "SELL",
-                                        "type": "MARKET",
-                                        "quoteOrderQty": f"{max(5.0, notional * 0.998):.2f}",
-                                    },
-                                )
-                                self.real_spot_brackets.pop(sym_pair, None)
+                                await self.close_spot_position(sym_pair, reason=exit_reason)
                                 continue
                             except Exception as sell_err:
-                                logger.warning(f"[{sym_pair}] Aviso ao executar saída Spot: {sell_err}")
+                                logger.warning(f"[{sym_pair}] Aviso ao executar saída automática Spot ({exit_reason}): {sell_err}")
 
                         pnl = (mark_p - entry_p) * qty
+                        pnl_pct = ((mark_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+                        tp_pct = ((tp_p - entry_p) / entry_p * 100.0) if (entry_p > 0 and tp_p > 0) else 0.55
+                        sl_pct = ((entry_p - stop_p) / entry_p * 100.0) if (entry_p > 0 and stop_p > 0) else 0.35
+
                         spot_positions.append(
                             {
                                 "symbol": sym_pair,
                                 "side": "SPOT LONG",
+                                "mode": pos_mode,
                                 "contracts": round(qty, 6),
                                 "notional_usd": round(notional, 2),
                                 "entry_price": round(entry_p, 6),
                                 "mark_price": mark_p,
-                                "stop_price": stop_p,
-                                "take_profit_price": tp_p,
+                                "stop_price": round(stop_p, 6),
+                                "take_profit_price": round(tp_p, 6),
                                 "unrealized_pnl": round(pnl, 2),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "tp_pct": round(tp_pct, 2),
+                                "sl_pct": round(sl_pct, 2),
                                 "leverage": 1,
                                 "margin_mode": "spot",
                             }
@@ -636,6 +792,7 @@ class BinanceFuturesExecutor:
                     {
                         "symbol": pos.get("symbol"),
                         "side": str(pos.get("side") or "").upper(),
+                        "mode": "SNIPER_CANDLE",
                         "contracts": contracts,
                         "notional_usd": round(abs(float(pos.get("notional") or 0.0)), 2),
                         "entry_price": float(pos.get("entryPrice") or 0.0),
@@ -658,6 +815,7 @@ class BinanceFuturesExecutor:
         take_profit_price: float,
         leverage: Optional[int] = None,
         margin_usdt: Optional[float] = None,
+        mode: str = "SNIPER_CANDLE",
     ) -> Dict[str, Any]:
         if self.exchange is None:
             await self.initialize()
@@ -676,7 +834,7 @@ class BinanceFuturesExecutor:
                 notional_usdt = 5.20
 
             logger.info(
-                f"[{symbol}] [SPOT] Comprando ${notional_usdt:.2f} USDT a mercado (quoteOrderQty) | "
+                f"[{symbol}] [SPOT {mode}] Comprando ${notional_usdt:.2f} USDT a mercado (quoteOrderQty) | "
                 f"SL: {stop_price:.6f} | TP: {take_profit_price:.6f}"
             )
             try:
@@ -697,15 +855,24 @@ class BinanceFuturesExecutor:
                 cummulative_quote = float(buy_res.get("cummulativeQuoteQty") or notional_usdt)
                 avg_entry = (cummulative_quote / executed_qty) if executed_qty > 0 else entry_price
 
+                # Recalcula proporcionalmente SL e TP a partir do preço médio real de preenchimento
+                sl_ratio = (stop_price / entry_price) if entry_price > 0 else 0.9965
+                tp_ratio = (take_profit_price / entry_price) if entry_price > 0 else 1.0055
+                adj_stop = float(avg_entry * sl_ratio)
+                adj_tp = float(avg_entry * tp_ratio)
+
                 self.real_spot_brackets[symbol] = {
                     "entry_price": float(avg_entry),
-                    "stop_price": float(stop_price),
-                    "take_profit_price": float(take_profit_price),
+                    "stop_price": round(adj_stop, 6),
+                    "take_profit_price": round(adj_tp, 6),
+                    "mode": mode,
                 }
+                self.save_brackets()
 
                 return {
                     "symbol": symbol,
                     "direction": "LONG",
+                    "mode": mode,
                     "leverage": 1,
                     "margin_usdt": round(cummulative_quote, 2),
                     "margin_mode": "spot",
@@ -715,8 +882,8 @@ class BinanceFuturesExecutor:
                     "stop_order_id": None,
                     "tp_order_id": None,
                     "entry_price": round(avg_entry, 6),
-                    "stop_price": round(stop_price, 6),
-                    "take_profit_price": round(take_profit_price, 6),
+                    "stop_price": round(adj_stop, 6),
+                    "take_profit_price": round(adj_tp, 6),
                     "working_type": "SPOT_MARKET",
                     "reduce_only": True,
                 }
@@ -806,13 +973,19 @@ class BinanceFuturesExecutor:
             "reduce_only": True,
         }
 
-    async def scan_orderbook_scalp(self, symbols: List[str]) -> List[Dict[str, Any]]:
+    async def scan_orderbook_scalp(
+        self,
+        symbols: List[str],
+        scalp_tp_pct: float = 0.50,
+        scalp_sl_pct: float = 0.35,
+        target_mode: str = "FIXED",
+    ) -> List[Dict[str, Any]]:
         """
         Analisa em tempo real o Livro de Ofertas Nível 2 (Order Book Depth 100 níveis)
         combinado com o Fluxo de Agressão Compradora Real (Taker Buy Volume):
         - Calcula Demanda (Bids $) vs Oferta (Asks $) a 0.85% do preço.
         - Identifica Paredões de Baleias (Whale Bid Wall para Stop Loss e Whale Ask Wall para Take Profit).
-        - Calcula o Scalp Score (0-100) e sinaliza oportunidades cirúrgicas onde o alvo supera com folga a taxa de 0.11%.
+        - Permite operar com Alvo Fixo Rápido (ex: +0.50% bruto / -0.35% stop) ou Alvo Dinâmico no Paredão (`WALL`).
         """
         if self.http_client is None:
             await self.initialize()
@@ -876,8 +1049,7 @@ class BinanceFuturesExecutor:
                     val_usd = p * q
                     if p <= band_high:
                         asks_usd += val_usd
-                    # Paredão de venda relevante pelo menos 0.45% acima da entrada para caber o scalp
-                    if p >= best_ask * 1.0045 and val_usd > ask_wall_usd:
+                    if p >= best_ask * 1.0040 and val_usd > ask_wall_usd:
                         ask_wall_usd = val_usd
                         ask_wall_price = p
 
@@ -894,17 +1066,21 @@ class BinanceFuturesExecutor:
                 taker_buy_vol = sum(float(k[10]) for k in klines[-2:]) if klines else 0.0
                 taker_buy_pct = ((taker_buy_vol / total_quote_vol) * 100.0) if total_quote_vol > 0 else 50.0
 
-                # Posicionamento inteligente usando os Paredões do Book:
-                # Stop Loss protegido atrás do Paredão de Compra (entre 0.35% e 0.85%)
-                raw_stop = bid_wall_price * 0.9988
-                stop_dist = max(best_ask * 0.0035, min(best_ask - raw_stop, best_ask * 0.0085))
-                stop_price = best_ask - stop_dist
+                if target_mode.upper() == "WALL":
+                    raw_stop = bid_wall_price * 0.9988
+                    stop_dist = max(best_ask * 0.0035, min(best_ask - raw_stop, best_ask * 0.0085))
+                    stop_price = best_ask - stop_dist
 
-                # Take Profit posicionado logo antes do Paredão de Venda (mínimo 1.85x Risco e >= +0.65% bruto)
-                min_tp_dist = max(stop_dist * 1.85, best_ask * 0.0065)
-                wall_tp_dist = max(min_tp_dist, (ask_wall_price * 0.9990) - best_ask)
-                tp_dist = min(wall_tp_dist, best_ask * 0.0160)
-                tp_price = best_ask + tp_dist
+                    min_tp_dist = max(stop_dist * 1.75, best_ask * 0.0055)
+                    wall_tp_dist = max(min_tp_dist, (ask_wall_price * 0.9990) - best_ask)
+                    tp_dist = min(wall_tp_dist, best_ask * 0.0150)
+                    tp_price = best_ask + tp_dist
+                else:
+                    # Modo Alvo Fixo Rápido configurado pelo usuário no painel de Scalp Separado
+                    tp_dist = best_ask * (max(0.25, float(scalp_tp_pct)) / 100.0)
+                    stop_dist = best_ask * (max(0.20, float(scalp_sl_pct)) / 100.0)
+                    tp_price = best_ask + tp_dist
+                    stop_price = best_ask - stop_dist
 
                 gross_target_pct = (tp_dist / best_ask) * 100.0
                 net_target_pct = gross_target_pct - 0.11
@@ -916,7 +1092,7 @@ class BinanceFuturesExecutor:
                     buy_pressure_pct >= 57.5
                     and taker_buy_pct >= 52.0
                     and spread_pct <= 0.06
-                    and net_target_pct >= 0.45
+                    and net_target_pct >= 0.25
                 )
 
                 if buy_pressure_pct >= 63.0 and taker_buy_pct >= 55.0:
@@ -945,6 +1121,7 @@ class BinanceFuturesExecutor:
                     "entry_price": round(best_ask, 6),
                     "stop_price": round(stop_price, 6),
                     "take_profit_price": round(tp_price, 6),
+                    "gross_target_pct": round(gross_target_pct, 2),
                     "risk_pct": round(risk_pct, 2),
                     "net_target_pct": round(net_target_pct, 2),
                     "scalp_score": scalp_score,

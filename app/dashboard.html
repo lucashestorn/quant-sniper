@@ -164,117 +164,185 @@
             </div>
         </section>
 
-        <!-- PAINEL DE PARÂMETROS EM TEMPO REAL (SEM REINICIAR CONTAINER) -->
-        <section class="card-glass rounded-xl p-4">
-            <div class="flex flex-wrap items-center justify-between gap-4">
-                <div class="flex items-center gap-2">
-                    <i data-lucide="settings-2" class="w-4 h-4 text-amber-400"></i>
-                    <h2 class="text-xs font-bold uppercase tracking-wider text-white">Ajuste Rápido de Valores e Risco (Em Tempo Real via API)</h2>
-                    <span class="text-[11px] text-slate-400 hidden sm:inline">— Altere margem em dólares, alavancagem e vagas sem reiniciar o Docker</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button onclick="applyPreset10()" class="px-2.5 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/70 text-[11px] font-semibold text-emerald-300 transition">
-                        Preset Banca $10 ($2.50 × 3x | Max 2)
-                    </button>
-                    <button onclick="applyPreset50()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
-                        Preset Banca $50 ($6.00 × 3x | Max 3)
-                    </button>
-                    <button onclick="applyPreset200()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
-                        Preset Banca $200+ ($25.00 × 3x | Max 4)
-                    </button>
-                </div>
+        <!-- BARRA DE NAVEGAÇÃO: TERMINAIS SEPARADOS (SCALP BOOK L2 vs SNIPER VELAS) -->
+        <section class="card-glass rounded-xl p-2.5 border border-slate-700/80 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+                <button onclick="switchTerminalTab('scalp')" id="tabBtnScalp"
+                    class="px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg">
+                    <i data-lucide="zap" class="w-4 h-4"></i>
+                    <span>⚡ TERMINAL SCALP SEPARADO (Livro de Ofertas L2 & Saída Rápida)</span>
+                </button>
+                <button onclick="switchTerminalTab('sniper')" id="tabBtnSniper"
+                    class="px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                    <i data-lucide="crosshair" class="w-4 h-4"></i>
+                    <span>🎯 TERMINAL SNIPER (Velas Walk-Forward 5m / 15m / 30m / 1h)</span>
+                </button>
+                <button onclick="switchTerminalTab('both')" id="tabBtnBoth"
+                    class="px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800">
+                    <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
+                    <span>Visão Dupla</span>
+                </button>
             </div>
-
-            <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
-                <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Margem por Trade ($ USDT)</label>
-                    <input type="number" id="inputMarginUsdt" step="0.5" min="1.0" value="2.5" oninput="updatePreviewNotional()"
-                        class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
-                </div>
-                <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Alavancagem Isolada (x)</label>
-                    <input type="number" id="inputLeverage" step="1" min="1" max="25" value="3" oninput="updatePreviewNotional()"
-                        class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
-                </div>
-                <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Máx. Posições Simultâneas</label>
-                    <input type="number" id="inputMaxPositions" step="1" min="1" max="15" value="2" oninput="updatePreviewNotional()"
-                        class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
-                </div>
-                <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Profit Factor Mínimo (30D)</label>
-                    <input type="number" id="inputMinPf" step="0.05" min="1.10" max="3.00" value="1.35"
-                        class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
-                </div>
-                <div>
-                    <button onclick="saveRuntimeConfig()" id="btnSaveConfig"
-                        class="w-full py-2 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow">
-                        <i data-lucide="save" class="w-4 h-4"></i>
-                        <span>Aplicar Agora</span>
-                    </button>
-                </div>
-            </div>
-            <div id="configFeedback" class="mt-2 text-xs mono text-slate-400">
-                Ordem Nominal Calculada: <strong id="previewNotional" class="text-amber-300">$7.50 USDT</strong> por entrada | Margem Máxima se encher todas as vagas: <strong id="previewMaxMargin" class="text-white">$5.00 USDT</strong>
+            <div class="flex items-center gap-2 text-xs mono pr-2">
+                <span class="px-2.5 py-1 rounded bg-emerald-950/90 border border-emerald-800 text-emerald-300 font-bold" id="scalpActiveTargetBadge">
+                    Alvo Venda Scalp: +0.50% Bruto (+0.39% Líq.) | Stop: -0.35%
+                </span>
             </div>
         </section>
 
-        <!-- POSIÇÕES ABERTAS & HISTÓRICO DE OPERAÇÕES DISPARADAS -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <!-- Posições Abertas na Binance -->
-            <section class="card-glass rounded-xl p-4 flex flex-col">
-                <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Posições Abertas na Corretora (Tempo Real)</h3>
+        <!-- ========================================================================= -->
+        <!-- ÁREA 1 (SEPARADA): TERMINAL DE SCALP — LIVRO DE OFERTAS L2 & GESTÃO ATIVA -->
+        <!-- ========================================================================= -->
+        <div id="workspaceScalp" class="space-y-5">
+
+            <!-- PAINEL DE CONFIGURAÇÃO EXCLUSIVO DO SCALP (EM QUANTO VENDE E PARA) -->
+            <section class="card-glass rounded-xl p-4 border border-amber-500/40 bg-gradient-to-r from-slate-900/95 via-slate-900/90 to-amber-950/20">
+                <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400">
+                            <i data-lucide="sliders" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xs font-extrabold uppercase tracking-wider text-white">
+                                Controle Dedicado do Scalp — Em Quanto Vende (Take Profit) & Stop Loss
+                            </h2>
+                            <p class="text-[11px] text-slate-400">
+                                Configure o alvo de venda rápida do Scalp e aplique instantaneamente nas suas posições abertas (<code class="text-amber-300">UNI/USDT</code>, <code class="text-amber-300">XAUT/USDT</code>) e nos próximos disparos.
+                            </p>
+                        </div>
                     </div>
-                    <span id="openPosBadge" class="text-[11px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">0 ativas</span>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <button onclick="applyScalpPreset(0.45, 0.32, 'FIXED')" class="px-2.5 py-1 rounded bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-700 text-[11px] font-bold text-emerald-300 transition">
+                            ⚡ Scalp Curto (+0.45% / SL -0.32%)
+                        </button>
+                        <button onclick="applyScalpPreset(0.55, 0.35, 'FIXED')" class="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-[11px] font-bold text-amber-300 transition">
+                            🔥 Scalp Ideal (+0.55% / SL -0.35%)
+                        </button>
+                        <button onclick="applyScalpPreset(0.80, 0.45, 'FIXED')" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
+                            🚀 Scalp Longo (+0.80% / SL -0.45%)
+                        </button>
+                        <button onclick="applyScalpPreset(0.65, 0.40, 'WALL')" class="px-2.5 py-1 rounded bg-blue-950/80 hover:bg-blue-900 border border-blue-700 text-[11px] font-semibold text-blue-300 transition">
+                            🐋 Auto Paredão Baleia
+                        </button>
+                    </div>
                 </div>
-                <div class="overflow-x-auto flex-1">
+
+                <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Alvo de Venda Bruto (TP %)</label>
+                        <input type="number" id="inputScalpTpPct" step="0.05" min="0.25" max="5.0" value="0.50"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-emerald-700/80 text-sm mono font-bold text-emerald-400 focus:outline-none focus:border-emerald-400" />
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Stop Loss Curto (SL %)</label>
+                        <input type="number" id="inputScalpSlPct" step="0.05" min="0.20" max="3.0" value="0.35"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-rose-800/80 text-sm mono font-bold text-rose-400 focus:outline-none focus:border-rose-400" />
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Modo do Alvo</label>
+                        <select id="selectScalpMode" class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs mono font-bold text-white">
+                            <option value="FIXED">🎯 Alvo Fixo Rápido (%)</option>
+                            <option value="WALL">🐋 Paredão do Book (Whale Wall)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Valor da Mão Scalp ($ USDT)</label>
+                        <input type="number" id="inputScalpMargin" step="0.25" min="5.0" value="5.25"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-amber-300 focus:outline-none focus:border-amber-400" />
+                    </div>
+                    <div>
+                        <button onclick="saveScalpConfig(true)" id="btnSaveScalpConfig"
+                            class="w-full py-2 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow-lg">
+                            <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+                            <span>Aplicar nas Abertas Agora</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- POSIÇÕES DE SCALP EM CURSO (COM PREÇO EXATO DE VENDA, PROGRESSO E VENDA A MERCADO 1-CLICK) -->
+            <section class="card-glass rounded-xl p-4 border border-emerald-500/30">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="crosshair" class="w-4 h-4 text-emerald-400"></i>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                            Suas Operações de Scalp Abertas Agora — Monitoramento de Saída Automática (a cada 6s)
+                        </h3>
+                    </div>
+                    <span id="scalpOpenPosBadge" class="text-[11px] mono px-2.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
+                        Sincronizando posições...
+                    </span>
+                </div>
+                <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
                         <thead>
                             <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                                <th class="py-2 px-2">Ativo</th>
-                                <th class="py-2 px-2">Lado</th>
-                                <th class="py-2 px-2">Tamanho ($)</th>
-                                <th class="py-2 px-2">Entrada</th>
-                                <th class="py-2 px-2">Mark Price</th>
-                                <th class="py-2 px-2 text-right">PnL (USDT)</th>
+                                <th class="py-2 px-2">Ativo / Valor</th>
+                                <th class="py-2 px-2">Preço Entrada</th>
+                                <th class="py-2 px-2">Preço Atual (Mark)</th>
+                                <th class="py-2 px-2">Stop Loss (SL)</th>
+                                <th class="py-2 px-2">Em Quanto Vende (Alvo TP)</th>
+                                <th class="py-2 px-2 w-44">Progresso até a Venda</th>
+                                <th class="py-2 px-2 text-right">PnL Atual</th>
+                                <th class="py-2 px-2 text-right">Saída Manual (1-Click)</th>
                             </tr>
                         </thead>
-                        <tbody id="tableOpenPositions" class="divide-y divide-slate-800/60 mono">
+                        <tbody id="tableScalpOpenPositions" class="divide-y divide-slate-800/60 mono">
                             <tr>
-                                <td colspan="6" class="py-8 text-center text-slate-500">Nenhuma posição aberta no momento.</td>
+                                <td colspan="8" class="py-6 text-center text-slate-500">Carregando posições abertas da conta Spot...</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
             </section>
 
-            <!-- Operações Executadas pelo Sniper -->
-            <section class="card-glass rounded-xl p-4 flex flex-col">
-                <div class="flex items-center justify-between mb-3">
+            <!-- SCANNER & EXECUTOR DE SCALP: LIVRO DE OFERTAS NÍVEL 2 -->
+            <section class="card-glass rounded-xl p-4 border border-amber-500/25">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
                     <div class="flex items-center gap-2">
-                        <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Operações Disparadas pelo Sniper (Ordens Atômicas)</h3>
+                        <div class="p-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                            <i data-lucide="layers" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                                Scanner de Livro de Ofertas Nível 2 (Oferta vs. Procura + Agressão Tape)
+                                <span id="orderbookUpdatedBadge" class="text-[10px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-normal">Sincronizando Book...</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400">
+                                Profundidade de 100 níveis em tempo real: identifica absorção compradora e paredões institucionais de baleias.
+                            </p>
+                        </div>
                     </div>
-                    <span id="tradesHistoryBadge" class="text-[11px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">0 disparos</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleAutoOrderbookScalp()" id="btnAutoBookScalp"
+                            class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                            <span>🤖 Auto-Scalp Book (Demanda &ge; 62%): OFF</span>
+                        </button>
+                        <button onclick="fetchOrderbookScalp()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                            <span>Atualizar Book</span>
+                        </button>
+                    </div>
                 </div>
-                <div class="overflow-x-auto flex-1 max-h-[260px]">
+
+                <div class="overflow-x-auto max-h-[420px]">
                     <table class="w-full text-left border-collapse text-xs">
-                        <thead>
+                        <thead class="sticky top-0 bg-[#0c1322] z-10">
                             <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                                <th class="py-2 px-2">Data/Hora (UTC)</th>
-                                <th class="py-2 px-2">Ativo / TF</th>
-                                <th class="py-2 px-2">Lado</th>
-                                <th class="py-2 px-2">Entrada</th>
-                                <th class="py-2 px-2">Stop / Alvo</th>
-                                <th class="py-2 px-2 text-right">Notional</th>
+                                <th class="py-2 px-2">Ativo / Preço</th>
+                                <th class="py-2 px-2 w-48">Demanda (Compra) vs Oferta (Venda)</th>
+                                <th class="py-2 px-2 text-right">Liquidez Book (0.85%)</th>
+                                <th class="py-2 px-2 text-right">Agressão Tape (5m)</th>
+                                <th class="py-2 px-2">Paredão Suporte / Stop</th>
+                                <th class="py-2 px-2">Paredão Resist. / Venda TP</th>
+                                <th class="py-2 px-2 text-right">Alvo Líq. / Risco</th>
+                                <th class="py-2 px-2">Diagnóstico do Fluxo</th>
+                                <th class="py-2 px-2 text-right">Disparo</th>
                             </tr>
                         </thead>
-                        <tbody id="tableTradesHistory" class="divide-y divide-slate-800/60 mono">
+                        <tbody id="tableOrderbookScalp" class="divide-y divide-slate-800/60 mono">
                             <tr>
-                                <td colspan="6" class="py-8 text-center text-slate-500">Aguardando fechamento de vela com sinal validado [-2].</td>
+                                <td colspan="9" class="py-8 text-center text-slate-500">Analisando profundidade de 100 níveis do Livro de Ofertas da Binance...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -282,140 +350,210 @@
             </section>
         </div>
 
-        <!-- ÁREA DE SCALP: LIVRO DE OFERTAS NÍVEL 2 (DEMANDA vs OFERTA & PAREDÕES DE BALEIAS) -->
-        <section class="card-glass rounded-xl p-4 border border-amber-500/20">
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div class="flex items-center gap-2">
-                    <div class="p-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400">
-                        <i data-lucide="layers" class="w-4 h-4"></i>
+        <!-- ========================================================================= -->
+        <!-- ÁREA 2 (SEPARADA): TERMINAL SNIPER — VELAS WALK-FORWARD (5m/15m/30m/1h)    -->
+        <!-- ========================================================================= -->
+        <div id="workspaceSniper" class="space-y-5 hidden">
+            <!-- PAINEL DE PARÂMETROS EM TEMPO REAL (SEM REINICIAR CONTAINER) -->
+            <section class="card-glass rounded-xl p-4">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="settings-2" class="w-4 h-4 text-amber-400"></i>
+                        <h2 class="text-xs font-bold uppercase tracking-wider text-white">Ajuste Rápido de Valores e Risco do Sniper de Velas</h2>
+                        <span class="text-[11px] text-slate-400 hidden sm:inline">— Altere margem em dólares, alavancagem e vagas sem reiniciar</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="applyPreset10()" class="px-2.5 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/70 text-[11px] font-semibold text-emerald-300 transition">
+                            Preset Banca $10 ($5.25 × 1x | Max 2)
+                        </button>
+                        <button onclick="applyPreset50()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
+                            Preset Banca $50 ($6.00 × 3x | Max 3)
+                        </button>
+                        <button onclick="applyPreset200()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-slate-300 transition">
+                            Preset Banca $200+ ($25.00 × 3x | Max 4)
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Margem por Trade ($ USDT)</label>
+                        <input type="number" id="inputMarginUsdt" step="0.5" min="1.0" value="5.25" oninput="updatePreviewNotional()"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
                     </div>
                     <div>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-                            Scanner & Executor de Scalp — Livro de Ofertas Nível 2 (Oferta vs. Procura)
-                            <span id="orderbookUpdatedBadge" class="text-[10px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-normal">Sincronizando Book...</span>
-                        </h3>
-                        <p class="text-[11px] text-slate-400">
-                            Mede a Liquidez Real de Compra (Bids) vs Venda (Asks) a 0.85% do preço + Agressão no Tape (Taker Buy) e posiciona Stop/Alvo nos Paredões de Baleias.
-                        </p>
+                        <label class="block text-[11px] text-slate-400 mb-1">Alavancagem Isolada (x)</label>
+                        <input type="number" id="inputLeverage" step="1" min="1" max="25" value="1" oninput="updatePreviewNotional()"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
                     </div>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button onclick="toggleAutoOrderbookScalp()" id="btnAutoBookScalp"
-                        class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
-                        <span>🤖 Auto-Scalp Book (Demanda &ge; 62%): OFF</span>
-                    </button>
-                    <button onclick="fetchOrderbookScalp()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1">
-                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-                        <span>Atualizar Book</span>
-                    </button>
-                </div>
-            </div>
-
-            <div class="overflow-x-auto max-h-[340px]">
-                <table class="w-full text-left border-collapse text-xs">
-                    <thead class="sticky top-0 bg-[#0c1322] z-10">
-                        <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                            <th class="py-2 px-2">Ativo / Preço</th>
-                            <th class="py-2 px-2 w-48">Demanda (Compra) vs Oferta (Venda)</th>
-                            <th class="py-2 px-2 text-right">Liquidez Book (0.85%)</th>
-                            <th class="py-2 px-2 text-right">Agressão Tape (5m)</th>
-                            <th class="py-2 px-2">Paredão Suporte (SL)</th>
-                            <th class="py-2 px-2">Paredão Resistência (TP)</th>
-                            <th class="py-2 px-2 text-right">Alvo Líq. / Risco</th>
-                            <th class="py-2 px-2">Diagnóstico do Fluxo</th>
-                            <th class="py-2 px-2 text-right">Ação</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableOrderbookScalp" class="divide-y divide-slate-800/60 mono">
-                        <tr>
-                            <td colspan="9" class="py-8 text-center text-slate-500">Analisando profundidade de 100 níveis do Livro de Ofertas da Binance...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- TABELA DAS CAMPEÃS 30D & LOGS EM TEMPO REAL -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <!-- Mapa de Estratégias Campeãs (2/3 width) -->
-            <section class="card-glass rounded-xl p-4 lg:col-span-2 flex flex-col">
-                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
-                            Melhores Opções & Estratégias no Intervalo (<span id="labelActiveInterval" class="text-amber-300">30D • Auto</span>)
-                        </h3>
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Máx. Posições Simultâneas</label>
+                        <input type="number" id="inputMaxPositions" step="1" min="1" max="15" value="2" oninput="updatePreviewNotional()"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
                     </div>
-                    <div class="flex items-center gap-1.5">
-                        <button onclick="setViewMode('champions')" id="btnViewChampions" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500 text-black transition">
-                            🏆 1 por Moeda
-                        </button>
-                        <button onclick="setViewMode('top_all')" id="btnViewTopAll" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">
-                            🔥 Top 30 Opções
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Profit Factor Mínimo</label>
+                        <input type="number" id="inputMinPf" step="0.05" min="1.10" max="3.00" value="1.35"
+                            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-sm mono font-bold text-white focus:outline-none focus:border-amber-500" />
+                    </div>
+                    <div>
+                        <button onclick="saveRuntimeConfig()" id="btnSaveConfig"
+                            class="w-full py-2 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            <span>Aplicar Agora</span>
                         </button>
                     </div>
                 </div>
-
-                <!-- BARRA DE CONTROLE DE INTERVALO DE TEMPO (JANELA & TIMEFRAME) -->
-                <div class="mb-3 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-                    <div class="flex flex-wrap items-center gap-1.5">
-                        <span class="text-[11px] font-semibold text-slate-400 mr-1">Período (Janela):</span>
-                        <button onclick="changeInterval(30, null)" id="pillDays30" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-blue-600 text-white transition">30D</button>
-                        <button onclick="changeInterval(15, null)" id="pillDays15" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15D</button>
-                        <button onclick="changeInterval(7, null)" id="pillDays7" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">7D</button>
-                        <button onclick="changeInterval(3, null)" id="pillDays3" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">3D</button>
-                        <button onclick="changeInterval(1, null)" id="pillDays1" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">24H (1D)</button>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-1.5">
-                        <span class="text-[11px] font-semibold text-slate-400 mr-1">Timeframe Vela:</span>
-                        <button onclick="changeInterval(null, 'ALL')" id="pillTfALL" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-emerald-600 text-white transition">TODOS (Auto)</button>
-                        <button onclick="changeInterval(null, '1h')" id="pillTf1h" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">1Hr (1h)</button>
-                        <button onclick="changeInterval(null, '30m')" id="pillTf30m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">30m</button>
-                        <button onclick="changeInterval(null, '15m')" id="pillTf15m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15m</button>
-                        <button onclick="changeInterval(null, '5m')" id="pillTf5m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">5m ⚡</button>
-                    </div>
-                </div>
-                <div class="overflow-x-auto max-h-[420px]">
-                    <table class="w-full text-left border-collapse text-xs">
-                        <thead class="sticky top-0 bg-[#0c1322] z-10">
-                            <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                                <th class="py-2 px-2">#</th>
-                                <th class="py-2 px-2">Ativo</th>
-                                <th class="py-2 px-2">TF</th>
-                                <th class="py-2 px-2">Direção</th>
-                                <th class="py-2 px-2">Estratégia Vencedora (30D)</th>
-                                <th class="py-2 px-2 text-right">Lucro Líq.</th>
-                                <th class="py-2 px-2 text-right">PF</th>
-                                <th class="py-2 px-2 text-right">Win Rate</th>
-                                <th class="py-2 px-2 text-right">Trades</th>
-                                <th class="py-2 px-2 text-right">Score</th>
-                                <th class="py-2 px-2 text-right">Lote Mín.</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tableChampions" class="divide-y divide-slate-800/60 mono">
-                            <tr>
-                                <td colspan="11" class="py-8 text-center text-slate-500">Carregando mapa de estratégias campeãs...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div id="configFeedback" class="mt-2 text-xs mono text-slate-400">
+                    Ordem Nominal Calculada: <strong id="previewNotional" class="text-amber-300">$5.25 USDT</strong> por entrada | Margem Máxima se encher todas as vagas: <strong id="previewMaxMargin" class="text-white">$10.50 USDT</strong>
                 </div>
             </section>
 
-            <!-- Console de Logs em Tempo Real (1/3 width) -->
-            <section class="card-glass rounded-xl p-4 flex flex-col">
-                <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Eventos & Auditoria do Sniper</h3>
+            <!-- POSIÇÕES ABERTAS & HISTÓRICO DE OPERAÇÕES DISPARADAS -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <!-- Posições Abertas na Binance -->
+                <section class="card-glass rounded-xl p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">Posições Abertas na Corretora (Tempo Real)</h3>
+                        </div>
+                        <span id="openPosBadge" class="text-[11px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">0 ativas</span>
                     </div>
-                    <span class="text-[10px] mono text-emerald-400 flex items-center gap-1">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> LIVE
-                    </span>
-                </div>
-                <div id="logsContainer" class="flex-1 max-h-[420px] overflow-y-auto space-y-2 pr-1 mono text-[11px]">
-                    <div class="text-slate-500 text-center py-8">Sincronizando logs...</div>
-                </div>
-            </section>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                                    <th class="py-2 px-2">Ativo</th>
+                                    <th class="py-2 px-2">Tamanho ($)</th>
+                                    <th class="py-2 px-2">Entrada / Atual</th>
+                                    <th class="py-2 px-2">Stop / Venda (TP)</th>
+                                    <th class="py-2 px-2 text-right">PnL (USDT)</th>
+                                    <th class="py-2 px-2 text-right">Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableOpenPositions" class="divide-y divide-slate-800/60 mono">
+                                <tr>
+                                    <td colspan="6" class="py-8 text-center text-slate-500">Nenhuma posição aberta no momento.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Operações Executadas pelo Sniper -->
+                <section class="card-glass rounded-xl p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">Histórico de Ordens Disparadas (Sniper & Scalp)</h3>
+                        </div>
+                        <span id="tradesHistoryBadge" class="text-[11px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">0 disparos</span>
+                    </div>
+                    <div class="overflow-x-auto flex-1 max-h-[260px]">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                                    <th class="py-2 px-2">Data/Hora (UTC)</th>
+                                    <th class="py-2 px-2">Ativo / Modo</th>
+                                    <th class="py-2 px-2">Lado</th>
+                                    <th class="py-2 px-2">Entrada</th>
+                                    <th class="py-2 px-2">Stop / Alvo</th>
+                                    <th class="py-2 px-2 text-right">Notional</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableTradesHistory" class="divide-y divide-slate-800/60 mono">
+                                <tr>
+                                    <td colspan="6" class="py-8 text-center text-slate-500">Aguardando fechamento de vela com sinal validado [-2].</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- TABELA DAS CAMPEÃS & LOGS EM TEMPO REAL -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <!-- Mapa de Estratégias Campeãs (2/3 width) -->
+                <section class="card-glass rounded-xl p-4 lg:col-span-2 flex flex-col">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                                Melhores Opções & Estratégias no Intervalo (<span id="labelActiveInterval" class="text-amber-300">15D • Auto</span>)
+                            </h3>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="setViewMode('champions')" id="btnViewChampions" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500 text-black transition">
+                                🏆 1 por Moeda
+                            </button>
+                            <button onclick="setViewMode('top_all')" id="btnViewTopAll" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">
+                                🔥 Top 30 Opções
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- BARRA DE CONTROLE DE INTERVALO DE TEMPO (JANELA & TIMEFRAME) -->
+                    <div class="mb-3 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="text-[11px] font-semibold text-slate-400 mr-1">Período (Janela):</span>
+                            <button onclick="changeInterval(30, null)" id="pillDays30" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-blue-600 text-white transition">30D</button>
+                            <button onclick="changeInterval(15, null)" id="pillDays15" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15D</button>
+                            <button onclick="changeInterval(7, null)" id="pillDays7" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">7D</button>
+                            <button onclick="changeInterval(3, null)" id="pillDays3" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">3D</button>
+                            <button onclick="changeInterval(1, null)" id="pillDays1" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">24H (1D)</button>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="text-[11px] font-semibold text-slate-400 mr-1">Timeframe Vela:</span>
+                            <button onclick="changeInterval(null, 'ALL')" id="pillTfALL" class="px-2.5 py-1 rounded font-mono text-[11px] font-bold bg-emerald-600 text-white transition">TODOS (Auto)</button>
+                            <button onclick="changeInterval(null, '1h')" id="pillTf1h" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">1Hr (1h)</button>
+                            <button onclick="changeInterval(null, '30m')" id="pillTf30m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">30m</button>
+                            <button onclick="changeInterval(null, '15m')" id="pillTf15m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">15m</button>
+                            <button onclick="changeInterval(null, '5m')" id="pillTf5m" class="px-2.5 py-1 rounded font-mono text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition">5m ⚡</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto max-h-[420px]">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead class="sticky top-0 bg-[#0c1322] z-10">
+                                <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                                    <th class="py-2 px-2">#</th>
+                                    <th class="py-2 px-2">Ativo</th>
+                                    <th class="py-2 px-2">TF</th>
+                                    <th class="py-2 px-2">Direção</th>
+                                    <th class="py-2 px-2">Estratégia Vencedora</th>
+                                    <th class="py-2 px-2 text-right">Lucro Líq.</th>
+                                    <th class="py-2 px-2 text-right">PF</th>
+                                    <th class="py-2 px-2 text-right">Win Rate</th>
+                                    <th class="py-2 px-2 text-right">Trades</th>
+                                    <th class="py-2 px-2 text-right">Score</th>
+                                    <th class="py-2 px-2 text-right">Lote Mín.</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableChampions" class="divide-y divide-slate-800/60 mono">
+                                <tr>
+                                    <td colspan="11" class="py-8 text-center text-slate-500">Carregando mapa de estratégias campeãs...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Console de Logs em Tempo Real (1/3 width) -->
+                <section class="card-glass rounded-xl p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">Eventos & Auditoria do Sniper</h3>
+                        </div>
+                        <span class="text-[10px] mono text-emerald-400 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> LIVE
+                        </span>
+                    </div>
+                    <div id="logsContainer" class="flex-1 max-h-[420px] overflow-y-auto space-y-2 pr-1 mono text-[11px]">
+                        <div class="text-slate-500 text-center py-8">Sincronizando logs...</div>
+                    </div>
+                </section>
+            </div>
         </div>
     </main>
 
@@ -483,7 +621,91 @@
     <script>
         let currentStatus = null;
         let formInitialized = false;
+        let scalpFormInitialized = false;
         let currentViewMode = 'champions'; // 'champions' | 'top_all'
+        let currentTerminalTab = 'scalp'; // 'scalp' | 'sniper' | 'both'
+
+        function switchTerminalTab(tab) {
+            currentTerminalTab = tab;
+            const wScalp = document.getElementById('workspaceScalp');
+            const wSniper = document.getElementById('workspaceSniper');
+            const bScalp = document.getElementById('tabBtnScalp');
+            const bSniper = document.getElementById('tabBtnSniper');
+            const bBoth = document.getElementById('tabBtnBoth');
+
+            const activeClass = 'px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg';
+            const inactiveClass = 'px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+
+            if (tab === 'scalp') {
+                wScalp.classList.remove('hidden');
+                wSniper.classList.add('hidden');
+                bScalp.className = activeClass;
+                bSniper.className = inactiveClass;
+                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
+            } else if (tab === 'sniper') {
+                wScalp.classList.add('hidden');
+                wSniper.classList.remove('hidden');
+                bScalp.className = inactiveClass;
+                bSniper.className = activeClass;
+                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
+            } else {
+                wScalp.classList.remove('hidden');
+                wSniper.classList.remove('hidden');
+                bScalp.className = inactiveClass;
+                bSniper.className = inactiveClass;
+                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-amber-500 text-black shadow-lg';
+            }
+        }
+
+        async function applyScalpPreset(tpPct, slPct, mode) {
+            document.getElementById('inputScalpTpPct').value = tpPct.toFixed(2);
+            document.getElementById('inputScalpSlPct').value = slPct.toFixed(2);
+            document.getElementById('selectScalpMode').value = mode;
+            await saveScalpConfig(true);
+        }
+
+        async function saveScalpConfig(applyToOpen = true) {
+            const tpPct = parseFloat(document.getElementById('inputScalpTpPct').value || 0.50);
+            const slPct = parseFloat(document.getElementById('inputScalpSlPct').value || 0.35);
+            const mode = document.getElementById('selectScalpMode').value || 'FIXED';
+            const margin = parseFloat(document.getElementById('inputScalpMargin').value || 5.25);
+
+            const btn = document.getElementById('btnSaveScalpConfig');
+            const origHtml = btn.innerHTML;
+            btn.innerText = 'APLICANDO...';
+            try {
+                const res = await fetch('/api/scalp/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scalp_tp_pct: tpPct,
+                        scalp_sl_pct: slPct,
+                        scalp_target_mode: mode,
+                        scalp_margin_usdt: margin,
+                        apply_to_open: applyToOpen
+                    })
+                });
+                if (res.ok) {
+                    await fetchStatus();
+                    await fetchOrderbookScalp();
+                    btn.innerText = '✓ ALVO APLICADO!';
+                    setTimeout(() => { btn.innerHTML = origHtml; lucide.createIcons(); }, 1400);
+                }
+            } catch (e) {
+                btn.innerHTML = origHtml;
+            }
+        }
+
+        async function closePositionMarket(symbol) {
+            const res = await fetch('/api/positions/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: symbol })
+            });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
 
         function setViewMode(mode) {
             currentViewMode = mode;
@@ -664,37 +886,124 @@
                 formInitialized = true;
             }
 
+            if (!scalpFormInitialized && data.scalp_tp_pct !== undefined) {
+                document.getElementById('inputScalpTpPct').value = Number(data.scalp_tp_pct || 0.50).toFixed(2);
+                document.getElementById('inputScalpSlPct').value = Number(data.scalp_sl_pct || 0.35).toFixed(2);
+                document.getElementById('selectScalpMode').value = data.scalp_target_mode || 'FIXED';
+                document.getElementById('inputScalpMargin').value = Number(data.scalp_margin_usdt || 5.25).toFixed(2);
+                scalpFormInitialized = true;
+            }
+
+            const sTp = Number(data.scalp_tp_pct || 0.50);
+            const sSl = Number(data.scalp_sl_pct || 0.35);
+            const sNet = Math.max(0, sTp - 0.11);
+            const sMode = (data.scalp_target_mode || 'FIXED') === 'WALL' ? 'Auto Paredão Baleia' : `+${sTp.toFixed(2)}% Bruto (+${sNet.toFixed(2)}% Líq.)`;
+            const badgeTarget = document.getElementById('scalpActiveTargetBadge');
+            if (badgeTarget) {
+                badgeTarget.innerText = `Alvo Venda Scalp: ${sMode} | Stop: -${sSl.toFixed(2)}%`;
+            }
+
             // Calibration KPI
             document.getElementById('kpiChampionsCount').innerText = data.champions_count || 0;
             document.getElementById('kpiLastCalibration').innerText = data.last_calibration_utc || 'Em andamento...';
             const calState = document.getElementById('kpiCalibrationState');
             if (data.is_calibrating) {
-                calState.innerText = 'CALIBRANDO 30D...';
+                calState.innerText = 'CALIBRANDO...';
                 calState.className = 'text-xs mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700 animate-pulse';
             } else {
                 calState.innerText = 'PRONTO 24/7';
                 calState.className = 'text-xs mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800';
             }
 
-            // Render Open Positions Table
+            // Render Separated Scalp Open Positions Table (with exact Sell Price + Progress Bar + 1-Click Sell)
+            const scalpBadge = document.getElementById('scalpOpenPosBadge');
+            if (scalpBadge) {
+                scalpBadge.innerText = `${openPos.length} / ${maxPos} posições ativas`;
+            }
+            const tbodyScalpPos = document.getElementById('tableScalpOpenPositions');
+            if (tbodyScalpPos) {
+                if (openPos.length === 0) {
+                    tbodyScalpPos.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-slate-500">Nenhuma posição aberta no momento. Clique em <strong>⚡ Scalp</strong> em qualquer ativo abaixo ou ative o <strong>Auto-Scalp Book</strong>.</td></tr>`;
+                } else {
+                    tbodyScalpPos.innerHTML = openPos.map(p => {
+                        const entryP = Number(p.entry_price || 0);
+                        const markP = Number(p.mark_price || 0);
+                        const stopP = Number(p.stop_price || 0);
+                        const tpP = Number(p.take_profit_price || 0);
+                        const pnl = Number(p.unrealized_pnl || 0);
+                        const pnlPct = Number(p.pnl_pct || ((entryP > 0) ? ((markP - entryP) / entryP * 100) : 0));
+                        const tpPct = Number(p.tp_pct || ((entryP > 0 && tpP > 0) ? ((tpP - entryP) / entryP * 100) : 0.50));
+                        const slPct = Number(p.sl_pct || ((entryP > 0 && stopP > 0) ? ((entryP - stopP) / entryP * 100) : 0.35));
+
+                        let progress = 0;
+                        if (tpP > entryP && markP > entryP) {
+                            progress = Math.min(100, Math.max(5, ((markP - entryP) / (tpP - entryP)) * 100));
+                        } else if (markP <= entryP) {
+                            progress = 5;
+                        }
+
+                        return `
+                            <tr class="hover:bg-slate-800/40">
+                                <td class="py-2.5 px-2">
+                                    <div class="font-extrabold text-white">${p.symbol}</div>
+                                    <div class="text-[10px] text-amber-300">$${Number(p.notional_usd || 0).toFixed(2)} USDT (${p.contracts} un.)</div>
+                                </td>
+                                <td class="py-2.5 px-2 text-slate-300 font-bold">$${entryP}</td>
+                                <td class="py-2.5 px-2 font-extrabold ${markP >= entryP ? 'text-emerald-400' : 'text-rose-400'}">$${markP}</td>
+                                <td class="py-2.5 px-2">
+                                    <div class="text-rose-400 font-bold">$${stopP}</div>
+                                    <div class="text-[10px] text-slate-400">-${slPct.toFixed(2)}%</div>
+                                </td>
+                                <td class="py-2.5 px-2">
+                                    <div class="text-emerald-300 font-extrabold">$${tpP}</div>
+                                    <div class="text-[10px] text-emerald-400">+${tpPct.toFixed(2)}% (Venda Auto)</div>
+                                </td>
+                                <td class="py-2.5 px-2">
+                                    <div class="flex justify-between text-[10px] mb-1">
+                                        <span class="${pnlPct >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400'}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>
+                                        <span class="text-slate-400">Alvo: +${tpPct.toFixed(2)}%</span>
+                                    </div>
+                                    <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                                        <div class="h-full ${pnlPct >= 0 ? 'bg-emerald-500' : 'bg-rose-500'} transition-all" style="width: ${progress.toFixed(0)}%"></div>
+                                    </div>
+                                </td>
+                                <td class="py-2.5 px-2 text-right font-extrabold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                                </td>
+                                <td class="py-2.5 px-2 text-right">
+                                    <button onclick="closePositionMarket('${p.symbol}')"
+                                        class="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-[11px] shadow transition">
+                                        💰 Vender Agora
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+            }
+
+            // Render Open Positions Table (Sniper tab)
             document.getElementById('openPosBadge').innerText = `${openPos.length} ativas`;
             const tbodyPos = document.getElementById('tableOpenPositions');
             if (openPos.length === 0) {
                 tbodyPos.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500">Nenhuma posição aberta na corretora no momento.</td></tr>`;
             } else {
                 tbodyPos.innerHTML = openPos.map(p => {
-                    const isLong = p.side === 'LONG';
                     const pnl = Number(p.unrealized_pnl || 0);
                     return `
                         <tr class="hover:bg-slate-800/40">
                             <td class="py-2 px-2 font-bold text-white">${p.symbol}</td>
-                            <td class="py-2 px-2">
-                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${isLong ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'}">${p.side} ${p.leverage}x</span>
-                            </td>
                             <td class="py-2 px-2 text-slate-200">$${Number(p.notional_usd || 0).toFixed(2)}</td>
-                            <td class="py-2 px-2 text-slate-300">${p.entry_price}</td>
-                            <td class="py-2 px-2 text-slate-300">${p.mark_price}</td>
+                            <td class="py-2 px-2 text-slate-300">$${p.entry_price} → <strong class="text-white">$${p.mark_price}</strong></td>
+                            <td class="py-2 px-2 text-[11px]">
+                                <span class="text-rose-400">SL: $${p.stop_price}</span> / <span class="text-emerald-400 font-bold">TP: $${p.take_profit_price}</span>
+                            </td>
                             <td class="py-2 px-2 text-right font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td>
+                            <td class="py-2 px-2 text-right">
+                                <button onclick="closePositionMarket('${p.symbol}')" class="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px]">
+                                    💰 Vender
+                                </button>
+                            </td>
                         </tr>
                     `;
                 }).join('');

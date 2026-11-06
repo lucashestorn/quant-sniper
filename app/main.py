@@ -18,6 +18,7 @@ from typing import Any, Deque, Dict, List, Optional, Set
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse
@@ -65,6 +66,19 @@ class ScalpExecuteRequest(BaseModel):
     take_profit_price: float
 
 
+class ScalpConfigRequest(BaseModel):
+    scalp_tp_pct: Optional[float] = None
+    scalp_sl_pct: Optional[float] = None
+    scalp_target_mode: Optional[str] = None
+    scalp_margin_usdt: Optional[float] = None
+    orderbook_scalp_auto: Optional[bool] = None
+    apply_to_open: Optional[bool] = True
+
+
+class ClosePositionRequest(BaseModel):
+    symbol: str
+
+
 class SniperRuntimeState:
     """Estado global em memória do Quant Terminal Sniper."""
 
@@ -78,6 +92,15 @@ class SniperRuntimeState:
         self.timeframe_filter: str = os.getenv("TIMEFRAME_FILTER", "ALL").upper()
         self.timeframes: List[str] = ["5m", "15m", "30m", "1h"]
 
+        # Configuração dedicada e separada do Motor de Scalp (Livro de Ofertas L2)
+        self.scalp_tp_pct: float = float(os.getenv("SCALP_TP_PCT", "0.50"))
+        self.scalp_sl_pct: float = float(os.getenv("SCALP_SL_PCT", "0.35"))
+        self.scalp_target_mode: str = os.getenv("SCALP_TARGET_MODE", "FIXED").upper()
+        self.scalp_margin_usdt: float = float(os.getenv("SCALP_MARGIN_USDT", "5.25"))
+        self.orderbook_scalp_auto: bool = False
+        self.orderbook_cache: List[Dict[str, Any]] = []
+        self.orderbook_last_ts: float = 0.0
+
         self.wallet_balance: Dict[str, Any] = {
             "total_usdt": 0.0,
             "free_usdt": 0.0,
@@ -89,9 +112,6 @@ class SniperRuntimeState:
         self.champions_map: Dict[str, Dict[str, Any]] = {}
         self.champions_by_tf: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.top_options_ranking: List[Dict[str, Any]] = []
-        self.orderbook_scalp_auto: bool = False
-        self.orderbook_cache: List[Dict[str, Any]] = []
-        self.orderbook_last_ts: float = 0.0
         self.ohlcv_cache: Dict[str, Dict[str, List[List[float]]]] = {}
         self.symbols_meta: Dict[str, Dict[str, Any]] = {}
         self.trades_history: Deque[Dict[str, Any]] = deque(maxlen=100)
@@ -409,6 +429,30 @@ async def run_candle_close_sniper() -> None:
     state.wallet_balance = await executor.get_wallet_balance()
 
 
+async def run_scalp_position_guardian() -> None:
+    """
+    Guardião 24/7 (a cada 6 segundos) que monitora o preço a mercado das posições abertas
+    (Scalp ou Sniper) e executa a venda automática caso atinjam o Take Profit ou Stop Loss,
+    mesmo com o navegador fechado.
+    """
+    try:
+        prev_syms = {p["symbol"] for p in state.open_positions}
+        current_pos = await executor.get_open_positions()
+        curr_syms = {p["symbol"] for p in current_pos}
+        state.open_positions = current_pos
+
+        closed_now = prev_syms - curr_syms
+        if closed_now:
+            state.wallet_balance = await executor.get_wallet_balance()
+            for s in closed_now:
+                state.append_log(
+                    "POSITION_CLOSED",
+                    f"Posição {s} encerrada automaticamente (Take Profit / Stop Loss atingido no Spot).",
+                )
+    except Exception as exc:
+        logger.debug(f"Erro no guardião de posições: {exc}")
+
+
 # ============================================================================
 # CICLO DE VIDA (LIFESPAN) & ENDPOINTS FASTAPI
 # ============================================================================
@@ -430,6 +474,15 @@ async def lifespan(app: FastAPI):
         run_candle_close_sniper,
         trigger=CronTrigger(minute="0,5,10,15,20,25,30,35,40,45,50,55", second="1", timezone="UTC"),
         id="candle_close_sniper",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    scheduler.add_job(
+        run_scalp_position_guardian,
+        trigger=IntervalTrigger(seconds=6),
+        id="scalp_position_guardian",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
@@ -492,6 +545,10 @@ async def get_status() -> Dict[str, Any]:
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "scalp_tp_pct": state.scalp_tp_pct,
+        "scalp_sl_pct": state.scalp_sl_pct,
+        "scalp_target_mode": state.scalp_target_mode,
+        "scalp_margin_usdt": state.scalp_margin_usdt,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -652,8 +709,8 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
     import time as _t
 
     now_sec = _t.time()
-    if (now_sec - state.orderbook_last_ts) >= 4.0 or not state.orderbook_cache:
-        target_syms = list(state.symbols_meta.keys())[:14]
+    if (now_sec - state.orderbook_last_ts) >= 3.5 or not state.orderbook_cache:
+        target_syms = list(state.symbols_meta.keys())[:16]
         if not target_syms:
             target_syms = [
                 "BTC/USDT",
@@ -666,8 +723,14 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
                 "ZEC/USDT",
                 "NEAR/USDT",
                 "UNI/USDT",
+                "XAUT/USDT",
             ]
-        state.orderbook_cache = await executor.scan_orderbook_scalp(target_syms)
+        state.orderbook_cache = await executor.scan_orderbook_scalp(
+            target_syms,
+            scalp_tp_pct=state.scalp_tp_pct,
+            scalp_sl_pct=state.scalp_sl_pct,
+            target_mode=state.scalp_target_mode,
+        )
         state.orderbook_last_ts = now_sec
 
         # Se Auto-Scalp do Livro de Ofertas estiver ligado, verifica gatilho extremo (Demanda >= 62% e Agressão >= 54%)
@@ -695,9 +758,84 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
     return {
         "status": "ok",
         "auto_enabled": state.orderbook_scalp_auto,
+        "scalp_tp_pct": state.scalp_tp_pct,
+        "scalp_sl_pct": state.scalp_sl_pct,
+        "scalp_target_mode": state.scalp_target_mode,
+        "scalp_margin_usdt": state.scalp_margin_usdt,
         "updated_utc": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
         "opportunities": state.orderbook_cache,
     }
+
+
+@app.post("/api/scalp/config")
+async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
+    """
+    Atualiza os parâmetros dedicados do Terminal de Scalp Separado (Alvo TP %, Stop Loss %,
+    Modo Fixo vs Paredão, Mão por Trade e Auto-Scalp) e opcionalmente recalcula o preço de venda
+    das posições abertas imediatamente.
+    """
+    changes: List[str] = []
+    if req.scalp_tp_pct is not None:
+        state.scalp_tp_pct = max(0.25, min(5.0, float(req.scalp_tp_pct)))
+        changes.append(f"TP=+{state.scalp_tp_pct:.2f}%")
+    if req.scalp_sl_pct is not None:
+        state.scalp_sl_pct = max(0.20, min(3.0, float(req.scalp_sl_pct)))
+        changes.append(f"SL=-{state.scalp_sl_pct:.2f}%")
+    if req.scalp_target_mode is not None and req.scalp_target_mode.upper() in ("FIXED", "WALL"):
+        state.scalp_target_mode = req.scalp_target_mode.upper()
+        changes.append(f"ModoAlvo={state.scalp_target_mode}")
+    if req.scalp_margin_usdt is not None:
+        state.scalp_margin_usdt = max(5.0, float(req.scalp_margin_usdt))
+        changes.append(f"MãoScalp=${state.scalp_margin_usdt:.2f}")
+    if req.orderbook_scalp_auto is not None:
+        state.orderbook_scalp_auto = bool(req.orderbook_scalp_auto)
+        changes.append(f"AutoScalp={'ON' if state.orderbook_scalp_auto else 'OFF'}")
+
+    updated_open: List[str] = []
+    if req.apply_to_open:
+        for sym, bkt in list(executor.real_spot_brackets.items()):
+            entry_p = float(bkt.get("entry_price") or 0.0)
+            if entry_p > 0:
+                bkt["take_profit_price"] = round(entry_p * (1.0 + (state.scalp_tp_pct / 100.0)), 6)
+                bkt["stop_price"] = round(entry_p * (1.0 - (state.scalp_sl_pct / 100.0)), 6)
+                bkt["mode"] = "SCALP_BOOK"
+                updated_open.append(f"{sym} (TP={bkt['take_profit_price']} | SL={bkt['stop_price']})")
+        executor.save_brackets()
+
+    state.orderbook_last_ts = 0.0
+    state.open_positions = await executor.get_open_positions()
+    msg_open = f" | Aplicado em: {', '.join(updated_open)}" if updated_open else ""
+    state.append_log(
+        "SCALP_CONFIG_UPDATED",
+        f"Configuração do Scalp Separado atualizada ({', '.join(changes)}){msg_open}",
+    )
+    return {
+        "status": "ok",
+        "scalp_tp_pct": state.scalp_tp_pct,
+        "scalp_sl_pct": state.scalp_sl_pct,
+        "scalp_target_mode": state.scalp_target_mode,
+        "scalp_margin_usdt": state.scalp_margin_usdt,
+        "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "open_positions": state.open_positions,
+    }
+
+
+@app.post("/api/positions/close")
+async def close_open_position(req: ClosePositionRequest) -> Dict[str, Any]:
+    """Vende imediatamente a mercado 100% da posição Spot aberta para USDT."""
+    try:
+        res = await executor.close_spot_position(req.symbol, reason="MANUAL_CLICK")
+        state.open_positions = await executor.get_open_positions()
+        state.wallet_balance = await executor.get_wallet_balance()
+        state.append_log(
+            "POSITION_CLOSED",
+            f"VENDA A MERCADO EXECUTADA: {res['symbol']} vendido por ${res.get('received_usdt', 0):.2f} USDT @ {res.get('exit_price', 0)} (PnL: ${res.get('realized_pnl', 0):+.2f} USDT)",
+            res,
+        )
+        return {"status": "ok", "receipt": res}
+    except Exception as exc:
+        state.append_log("ORDER_ERROR", f"Falha ao vender posição {req.symbol}: {exc}")
+        return {"status": "error", "message": str(exc)}
 
 
 @app.post("/api/orderbook-scalp/execute")
@@ -717,12 +855,14 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
         entry_price=req.entry_price,
         stop_price=req.stop_price,
         take_profit_price=req.take_profit_price,
+        margin_usdt=state.scalp_margin_usdt,
+        mode="SCALP_BOOK",
     )
     trade_record = {
         "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "symbol": req.symbol,
         "timeframe": "BOOK-L2",
-        "strategy_name": "Order Book Scalp (Demanda L2 + Agressão)",
+        "strategy_name": f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%)",
         "direction": "LONG",
         "entry_price": order_receipt["entry_price"],
         "stop_price": order_receipt["stop_price"],
@@ -735,7 +875,7 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
     state.trades_history.appendleft(trade_record)
     state.append_log(
         "ATOMIC_ORDER_FIRED",
-        f"SCALP LIVRO DE OFERTAS DISPARADO: {req.symbol} [BOOK-L2] LONG (${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | SL Paredão: {order_receipt['stop_price']} | TP Paredão: {order_receipt['take_profit_price']}",
+        f"SCALP LIVRO DE OFERTAS DISPARADO: {req.symbol} [BOOK-L2] LONG (${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | SL: {order_receipt['stop_price']} | TP: {order_receipt['take_profit_price']}",
         {"order_receipt": order_receipt},
     )
     state.open_positions = await executor.get_open_positions()
