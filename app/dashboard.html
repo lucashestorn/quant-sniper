@@ -282,6 +282,59 @@
             </section>
         </div>
 
+        <!-- ÁREA DE SCALP: LIVRO DE OFERTAS NÍVEL 2 (DEMANDA vs OFERTA & PAREDÕES DE BALEIAS) -->
+        <section class="card-glass rounded-xl p-4 border border-amber-500/20">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="p-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                        <i data-lucide="layers" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                            Scanner & Executor de Scalp — Livro de Ofertas Nível 2 (Oferta vs. Procura)
+                            <span id="orderbookUpdatedBadge" class="text-[10px] mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-normal">Sincronizando Book...</span>
+                        </h3>
+                        <p class="text-[11px] text-slate-400">
+                            Mede a Liquidez Real de Compra (Bids) vs Venda (Asks) a 0.85% do preço + Agressão no Tape (Taker Buy) e posiciona Stop/Alvo nos Paredões de Baleias.
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleAutoOrderbookScalp()" id="btnAutoBookScalp"
+                        class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                        <span>🤖 Auto-Scalp Book (Demanda &ge; 62%): OFF</span>
+                    </button>
+                    <button onclick="fetchOrderbookScalp()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        <span>Atualizar Book</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-[340px]">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="sticky top-0 bg-[#0c1322] z-10">
+                        <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                            <th class="py-2 px-2">Ativo / Preço</th>
+                            <th class="py-2 px-2 w-48">Demanda (Compra) vs Oferta (Venda)</th>
+                            <th class="py-2 px-2 text-right">Liquidez Book (0.85%)</th>
+                            <th class="py-2 px-2 text-right">Agressão Tape (5m)</th>
+                            <th class="py-2 px-2">Paredão Suporte (SL)</th>
+                            <th class="py-2 px-2">Paredão Resistência (TP)</th>
+                            <th class="py-2 px-2 text-right">Alvo Líq. / Risco</th>
+                            <th class="py-2 px-2">Diagnóstico do Fluxo</th>
+                            <th class="py-2 px-2 text-right">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableOrderbookScalp" class="divide-y divide-slate-800/60 mono">
+                        <tr>
+                            <td colspan="9" class="py-8 text-center text-slate-500">Analisando profundidade de 100 níveis do Livro de Ofertas da Binance...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
         <!-- TABELA DAS CAMPEÃS 30D & LOGS EM TEMPO REAL -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <!-- Mapa de Estratégias Campeãs (2/3 width) -->
@@ -848,7 +901,135 @@
             setInterval(updateCountdown, 1000);
             fetchStatus();
             setInterval(fetchStatus, 3500);
+            fetchOrderbookScalp();
+            setInterval(fetchOrderbookScalp, 5000);
         });
+
+        async function toggleAutoOrderbookScalp() {
+            const currentAuto = Boolean(currentStatus && currentStatus.orderbook_scalp_auto);
+            const res = await fetch('/api/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ orderbook_scalp_auto: !currentAuto })
+            });
+            if (res.ok) {
+                await fetchStatus();
+                await fetchOrderbookScalp();
+            }
+        }
+
+        async function fireOrderbookScalp(symbol, entryPrice, stopPrice, tpPrice) {
+            const res = await fetch('/api/orderbook-scalp/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: symbol,
+                    entry_price: Number(entryPrice),
+                    stop_price: Number(stopPrice),
+                    take_profit_price: Number(tpPrice)
+                })
+            });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
+
+        async function fetchOrderbookScalp() {
+            try {
+                const res = await fetch('/api/orderbook-scalp');
+                if (!res.ok) return;
+                const data = await res.json();
+                renderOrderbookScalp(data);
+            } catch (e) {
+                console.error('Erro ao buscar /api/orderbook-scalp:', e);
+            }
+        }
+
+        function renderOrderbookScalp(data) {
+            const badge = document.getElementById('orderbookUpdatedBadge');
+            if (badge && data.updated_utc) {
+                badge.innerText = `Ao Vivo • ${data.updated_utc}`;
+            }
+            const btnAuto = document.getElementById('btnAutoBookScalp');
+            if (btnAuto) {
+                if (data.auto_enabled) {
+                    btnAuto.innerHTML = `<span>🤖 Auto-Scalp Book (Demanda &ge; 62%): ATIVO</span>`;
+                    btnAuto.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg';
+                } else {
+                    btnAuto.innerHTML = `<span>🤖 Auto-Scalp Book (Demanda &ge; 62%): OFF</span>`;
+                    btnAuto.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+                }
+            }
+
+            const list = data.opportunities || [];
+            const tbody = document.getElementById('tableOrderbookScalp');
+            if (!tbody) return;
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="9" class="py-6 text-center text-slate-500">Nenhuma leitura de Order Book disponível no momento.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = list.map(item => {
+                const buyPct = Number(item.buy_pressure_pct || 50);
+                const sellPct = Number(item.sell_pressure_pct || 50);
+                const takerPct = Number(item.taker_buy_pct || 50);
+                const bidsK = (Number(item.bids_usd || 0) / 1000).toFixed(0);
+                const asksK = (Number(item.asks_usd || 0) / 1000).toFixed(0);
+                const bidWallK = (Number(item.bid_wall_usd || 0) / 1000).toFixed(1);
+                const askWallK = (Number(item.ask_wall_usd || 0) / 1000).toFixed(1);
+
+                let regimeBadge = 'bg-slate-800 text-slate-300 border-slate-700';
+                if (item.regime.includes('FORTE ABSORÇÃO')) regimeBadge = 'bg-emerald-950 text-emerald-300 border-emerald-700 font-bold';
+                else if (item.regime.includes('DEMANDA DOMINANTE')) regimeBadge = 'bg-blue-950 text-blue-300 border-blue-700 font-bold';
+                else if (item.regime.includes('VENDEDORA')) regimeBadge = 'bg-rose-950/70 text-rose-300 border-rose-800';
+
+                return `
+                    <tr class="hover:bg-slate-800/40">
+                        <td class="py-2 px-2">
+                            <div class="font-bold text-white">${item.symbol}</div>
+                            <div class="text-[10px] text-slate-400">$${item.price} <span class="text-slate-500">(sp: ${item.spread_pct}%)</span></div>
+                        </td>
+                        <td class="py-2 px-2">
+                            <div class="flex justify-between text-[10px] font-bold mb-1">
+                                <span class="text-emerald-400">${buyPct.toFixed(1)}% Compra</span>
+                                <span class="text-rose-400">${sellPct.toFixed(1)}% Venda</span>
+                            </div>
+                            <div class="w-full h-2 rounded-full bg-rose-950 overflow-hidden flex">
+                                <div class="h-full bg-emerald-500" style="width: ${buyPct}%"></div>
+                            </div>
+                        </td>
+                        <td class="py-2 px-2 text-right text-[11px]">
+                            <span class="text-emerald-400">$${bidsK}k</span> / <span class="text-rose-400">$${asksK}k</span>
+                        </td>
+                        <td class="py-2 px-2 text-right font-bold ${takerPct >= 53 ? 'text-emerald-400' : takerPct <= 47 ? 'text-rose-400' : 'text-slate-300'}">
+                            ${takerPct.toFixed(1)}%
+                        </td>
+                        <td class="py-2 px-2 text-[11px]">
+                            <div class="text-emerald-300 font-bold">$${item.bid_wall_price} <span class="text-[10px] text-slate-400">($${bidWallK}k)</span></div>
+                            <div class="text-[10px] text-rose-400">SL: $${item.stop_price}</div>
+                        </td>
+                        <td class="py-2 px-2 text-[11px]">
+                            <div class="text-amber-300 font-bold">$${item.ask_wall_price} <span class="text-[10px] text-slate-400">($${askWallK}k)</span></div>
+                            <div class="text-[10px] text-emerald-400">TP: $${item.take_profit_price}</div>
+                        </td>
+                        <td class="py-2 px-2 text-right">
+                            <span class="text-emerald-400 font-bold">+${item.net_target_pct}%</span>
+                            <span class="text-slate-500"> / </span>
+                            <span class="text-rose-400">-${item.risk_pct}%</span>
+                        </td>
+                        <td class="py-2 px-2">
+                            <span class="px-2 py-0.5 rounded border text-[10px] font-sans ${regimeBadge}">${item.regime}</span>
+                        </td>
+                        <td class="py-2 px-2 text-right">
+                            <button onclick="fireOrderbookScalp('${item.symbol}', ${item.entry_price}, ${item.stop_price}, ${item.take_profit_price})"
+                                class="px-2.5 py-1 rounded text-[11px] font-extrabold transition ${item.signal_ready ? 'bg-amber-500 hover:bg-amber-400 text-black shadow' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}">
+                                ⚡ Scalp
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
     </script>
 </body>
 </html>

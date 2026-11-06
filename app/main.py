@@ -50,11 +50,19 @@ class ToggleRequest(BaseModel):
     min_profit_factor: Optional[float] = None
     lookback_days: Optional[int] = None
     timeframe_filter: Optional[str] = None
+    orderbook_scalp_auto: Optional[bool] = None
     binance_api_key: Optional[str] = None
     binance_api_secret: Optional[str] = None
     testnet: Optional[bool] = None
     market_type: Optional[str] = None
     proxy_url: Optional[str] = None
+
+
+class ScalpExecuteRequest(BaseModel):
+    symbol: str
+    entry_price: float
+    stop_price: float
+    take_profit_price: float
 
 
 class SniperRuntimeState:
@@ -79,7 +87,11 @@ class SniperRuntimeState:
         }
         self.open_positions: List[Dict[str, Any]] = []
         self.champions_map: Dict[str, Dict[str, Any]] = {}
+        self.champions_by_tf: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.top_options_ranking: List[Dict[str, Any]] = []
+        self.orderbook_scalp_auto: bool = False
+        self.orderbook_cache: List[Dict[str, Any]] = []
+        self.orderbook_last_ts: float = 0.0
         self.ohlcv_cache: Dict[str, Dict[str, List[List[float]]]] = {}
         self.symbols_meta: Dict[str, Dict[str, Any]] = {}
         self.trades_history: Deque[Dict[str, Any]] = deque(maxlen=100)
@@ -148,11 +160,28 @@ def _recompute_champions_sync() -> Dict[str, Dict[str, Any]]:
     allowed_dirs = ["LONG"] if executor.market_type == "spot" else ["LONG", "SHORT"]
     target_tfs = _get_active_timeframes()
     new_champions: Dict[str, Dict[str, Any]] = {}
+    by_tf: Dict[str, Dict[str, Dict[str, Any]]] = {tf: {} for tf in state.timeframes}
     all_options: List[Dict[str, Any]] = []
 
     # Se o usuário filtrou um timeframe único ou janela curta, usa PF efetivo flexível se necessário
     for symbol, ohlcv_by_tf in state.ohlcv_cache.items():
         mkt = state.symbols_meta.get(symbol, {})
+        # Também indexa a campeã específica de cada timeframe (5m, 15m, 30m, 1h) para varreduras Auto
+        for single_tf in state.timeframes:
+            if single_tf in ohlcv_by_tf:
+                tf_champ = calibrate_symbol_champion(
+                    symbol=symbol,
+                    ohlcv_by_tf=ohlcv_by_tf,
+                    min_pf=state.min_profit_factor,
+                    allowed_directions=allowed_dirs,
+                    lookback_days=state.lookback_days,
+                    target_timeframes=[single_tf],
+                )
+                if tf_champ is not None:
+                    tf_champ["quote_volume_24h"] = mkt.get("quote_volume_24h", 0.0)
+                    tf_champ["min_notional_usdt"] = mkt.get("min_notional_usdt", 5.0)
+                    by_tf[single_tf][symbol] = tf_champ
+
         champion = calibrate_symbol_champion(
             symbol=symbol,
             ohlcv_by_tf=ohlcv_by_tf,
@@ -186,6 +215,7 @@ def _recompute_champions_sync() -> Dict[str, Dict[str, Any]]:
     all_options.sort(key=lambda x: x.get("quant_score", 0.0), reverse=True)
     state.top_options_ranking = all_options[:30]
     state.champions_map = new_champions
+    state.champions_by_tf = by_tf
     state.last_calibration_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     return new_champions
 
@@ -278,13 +308,26 @@ async def run_candle_close_sniper() -> None:
 
     current_notional = executor.order_margin_usdt * executor.default_leverage
 
-    eligible_targets = [
-        (sym, champ)
-        for sym, champ in state.champions_map.items()
-        if champ.get("timeframe") in closed_tfs
-        and sym not in open_symbols
-        and float(champ.get("min_notional_usdt", 5.0)) <= (current_notional * 1.25)
-    ]
+    eligible_targets: List[ Any ] = []
+    seen_pairs: Set[str] = set()
+    if state.timeframe_filter == "ALL" and state.champions_by_tf:
+        for tf in closed_tfs:
+            for sym, champ in state.champions_by_tf.get(tf, {}).items():
+                if (
+                    sym not in open_symbols
+                    and f"{sym}:{tf}" not in seen_pairs
+                    and float(champ.get("min_notional_usdt", 5.0)) <= (current_notional * 1.25)
+                ):
+                    seen_pairs.add(f"{sym}:{tf}")
+                    eligible_targets.append((sym, champ))
+    else:
+        eligible_targets = [
+            (sym, champ)
+            for sym, champ in state.champions_map.items()
+            if champ.get("timeframe") in closed_tfs
+            and sym not in open_symbols
+            and float(champ.get("min_notional_usdt", 5.0)) <= (current_notional * 1.25)
+        ]
 
     if not eligible_targets:
         return
@@ -448,6 +491,7 @@ async def get_status() -> Dict[str, Any]:
         "min_profit_factor": state.min_profit_factor,
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
+        "orderbook_scalp_auto": state.orderbook_scalp_auto,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -517,6 +561,10 @@ async def toggle_bot(
                 recompute_needed = True
                 changes.append(f"Timeframe={state.timeframe_filter}")
 
+        if payload.orderbook_scalp_auto is not None:
+            state.orderbook_scalp_auto = bool(payload.orderbook_scalp_auto)
+            changes.append(f"AutoScalpBook={'ON' if state.orderbook_scalp_auto else 'OFF'}")
+
         if payload.proxy_url is not None:
             executor.proxy_url = payload.proxy_url.strip()
             changes.append("Proxy atualizado")
@@ -575,6 +623,7 @@ async def toggle_bot(
         "min_profit_factor": state.min_profit_factor,
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
+        "orderbook_scalp_auto": state.orderbook_scalp_auto,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -592,3 +641,103 @@ async def trigger_calibration() -> Dict[str, Any]:
 
     state._calibration_task = asyncio.create_task(run_walk_forward_calibration())
     return {"status": "started", "message": "Calibração Walk-Forward iniciada em background."}
+
+
+@app.get("/api/orderbook-scalp")
+async def get_orderbook_scalp() -> Dict[str, Any]:
+    """
+    Escaneia em tempo real o Livro de Ofertas (Order Book Nível 2) + Fluxo de Agressão (Taker Buy)
+    das principais moedas líquidas e dispara automaticamente se `orderbook_scalp_auto` estiver ativo.
+    """
+    import time as _t
+
+    now_sec = _t.time()
+    if (now_sec - state.orderbook_last_ts) >= 4.0 or not state.orderbook_cache:
+        target_syms = list(state.symbols_meta.keys())[:14]
+        if not target_syms:
+            target_syms = [
+                "BTC/USDT",
+                "ETH/USDT",
+                "SOL/USDT",
+                "BNB/USDT",
+                "XRP/USDT",
+                "DOGE/USDT",
+                "PEPE/USDT",
+                "ZEC/USDT",
+                "NEAR/USDT",
+                "UNI/USDT",
+            ]
+        state.orderbook_cache = await executor.scan_orderbook_scalp(target_syms)
+        state.orderbook_last_ts = now_sec
+
+        # Se Auto-Scalp do Livro de Ofertas estiver ligado, verifica gatilho extremo (Demanda >= 62% e Agressão >= 54%)
+        if state.enabled and state.orderbook_scalp_auto:
+            open_syms = {p["symbol"] for p in state.open_positions}
+            slots = max(0, state.max_concurrent_positions - len(state.open_positions))
+            if slots > 0:
+                for item in state.orderbook_cache:
+                    if (
+                        item.get("signal_ready")
+                        and item.get("buy_pressure_pct", 0) >= 62.0
+                        and item.get("taker_buy_pct", 0) >= 54.0
+                        and item["symbol"] not in open_syms
+                    ):
+                        await execute_orderbook_scalp(
+                            ScalpExecuteRequest(
+                                symbol=item["symbol"],
+                                entry_price=item["entry_price"],
+                                stop_price=item["stop_price"],
+                                take_profit_price=item["take_profit_price"],
+                            )
+                        )
+                        break
+
+    return {
+        "status": "ok",
+        "auto_enabled": state.orderbook_scalp_auto,
+        "updated_utc": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        "opportunities": state.orderbook_cache,
+    }
+
+
+@app.post("/api/orderbook-scalp/execute")
+async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
+    """Dispara uma ordem atômica de Scalp baseada nas paredes de liquidez do Livro de Ofertas."""
+    open_positions = await executor.get_open_positions()
+    state.open_positions = open_positions
+    if len(open_positions) >= state.max_concurrent_positions:
+        return {
+            "status": "blocked",
+            "message": f"Limite de posições simultâneas atingido ({len(open_positions)}/{state.max_concurrent_positions}).",
+        }
+
+    order_receipt = await executor.execute_atomic_order(
+        symbol=req.symbol,
+        direction="LONG",
+        entry_price=req.entry_price,
+        stop_price=req.stop_price,
+        take_profit_price=req.take_profit_price,
+    )
+    trade_record = {
+        "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "symbol": req.symbol,
+        "timeframe": "BOOK-L2",
+        "strategy_name": "Order Book Scalp (Demanda L2 + Agressão)",
+        "direction": "LONG",
+        "entry_price": order_receipt["entry_price"],
+        "stop_price": order_receipt["stop_price"],
+        "take_profit_price": order_receipt["take_profit_price"],
+        "margin_usdt": order_receipt["margin_usdt"],
+        "leverage": order_receipt["leverage"],
+        "notional_usdt": order_receipt["notional_usdt"],
+        "entry_order_id": order_receipt["entry_order_id"],
+    }
+    state.trades_history.appendleft(trade_record)
+    state.append_log(
+        "ATOMIC_ORDER_FIRED",
+        f"SCALP LIVRO DE OFERTAS DISPARADO: {req.symbol} [BOOK-L2] LONG (${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | SL Paredão: {order_receipt['stop_price']} | TP Paredão: {order_receipt['take_profit_price']}",
+        {"order_receipt": order_receipt},
+    )
+    state.open_positions = await executor.get_open_positions()
+    state.wallet_balance = await executor.get_wallet_balance()
+    return {"status": "ok", "order_receipt": order_receipt}

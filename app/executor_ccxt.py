@@ -805,3 +805,158 @@ class BinanceFuturesExecutor:
             "working_type": "MARK_PRICE",
             "reduce_only": True,
         }
+
+    async def scan_orderbook_scalp(self, symbols: List[str]) -> List[Dict[str, Any]]:
+        """
+        Analisa em tempo real o Livro de Ofertas Nível 2 (Order Book Depth 100 níveis)
+        combinado com o Fluxo de Agressão Compradora Real (Taker Buy Volume):
+        - Calcula Demanda (Bids $) vs Oferta (Asks $) a 0.85% do preço.
+        - Identifica Paredões de Baleias (Whale Bid Wall para Stop Loss e Whale Ask Wall para Take Profit).
+        - Calcula o Scalp Score (0-100) e sinaliza oportunidades cirúrgicas onde o alvo supera com folga a taxa de 0.11%.
+        """
+        if self.http_client is None:
+            await self.initialize()
+        assert self.http_client is not None
+
+        async def _analyze_one(sym: str) -> Optional[Dict[str, Any]]:
+            raw_sym = sym.split(":")[0].replace("/", "")
+            try:
+                async with self._sem:
+                    depth_resp, kline_resp = await asyncio.gather(
+                        self.http_client.get(
+                            f"{VISION_BASE_URL}/depth",
+                            params={"symbol": raw_sym, "limit": 100},
+                        ),
+                        self.http_client.get(
+                            f"{VISION_BASE_URL}/klines",
+                            params={"symbol": raw_sym, "interval": "5m", "limit": 3},
+                        ),
+                    )
+                if depth_resp.status_code != 200 or kline_resp.status_code != 200:
+                    return None
+
+                depth = depth_resp.json()
+                klines = kline_resp.json()
+                bids = depth.get("bids") or []
+                asks = depth.get("asks") or []
+                if not bids or not asks:
+                    return None
+
+                best_bid = float(bids[0][0])
+                best_ask = float(asks[0][0])
+                mid_price = (best_bid + best_ask) / 2.0
+                if mid_price <= 0:
+                    return None
+
+                spread_pct = ((best_ask - best_bid) / mid_price) * 100.0
+                band_low = mid_price * 0.9915
+                band_high = mid_price * 1.0085
+
+                bids_usd = 0.0
+                bid_wall_price = best_bid * 0.995
+                bid_wall_usd = 0.0
+
+                for p_str, q_str in bids:
+                    p = float(p_str)
+                    q = float(q_str)
+                    val_usd = p * q
+                    if p >= band_low:
+                        bids_usd += val_usd
+                    if val_usd > bid_wall_usd:
+                        bid_wall_usd = val_usd
+                        bid_wall_price = p
+
+                asks_usd = 0.0
+                ask_wall_price = best_ask * 1.008
+                ask_wall_usd = 0.0
+
+                for p_str, q_str in asks:
+                    p = float(p_str)
+                    q = float(q_str)
+                    val_usd = p * q
+                    if p <= band_high:
+                        asks_usd += val_usd
+                    # Paredão de venda relevante pelo menos 0.45% acima da entrada para caber o scalp
+                    if p >= best_ask * 1.0045 and val_usd > ask_wall_usd:
+                        ask_wall_usd = val_usd
+                        ask_wall_price = p
+
+                total_book_usd = bids_usd + asks_usd
+                if total_book_usd <= 0:
+                    return None
+
+                buy_pressure_pct = (bids_usd / total_book_usd) * 100.0
+                sell_pressure_pct = 100.0 - buy_pressure_pct
+                obi_pct = ((bids_usd - asks_usd) / total_book_usd) * 100.0
+
+                # Fluxo de Agressão Compradora Real (Taker Buy Quote Volume nas últimas velas de 5m)
+                total_quote_vol = sum(float(k[7]) for k in klines[-2:]) if klines else 0.0
+                taker_buy_vol = sum(float(k[10]) for k in klines[-2:]) if klines else 0.0
+                taker_buy_pct = ((taker_buy_vol / total_quote_vol) * 100.0) if total_quote_vol > 0 else 50.0
+
+                # Posicionamento inteligente usando os Paredões do Book:
+                # Stop Loss protegido atrás do Paredão de Compra (entre 0.35% e 0.85%)
+                raw_stop = bid_wall_price * 0.9988
+                stop_dist = max(best_ask * 0.0035, min(best_ask - raw_stop, best_ask * 0.0085))
+                stop_price = best_ask - stop_dist
+
+                # Take Profit posicionado logo antes do Paredão de Venda (mínimo 1.85x Risco e >= +0.65% bruto)
+                min_tp_dist = max(stop_dist * 1.85, best_ask * 0.0065)
+                wall_tp_dist = max(min_tp_dist, (ask_wall_price * 0.9990) - best_ask)
+                tp_dist = min(wall_tp_dist, best_ask * 0.0160)
+                tp_price = best_ask + tp_dist
+
+                gross_target_pct = (tp_dist / best_ask) * 100.0
+                net_target_pct = gross_target_pct - 0.11
+                risk_pct = (stop_dist / best_ask) * 100.0
+
+                # Score de Confluência Order Book + Tape Reading (0 a 100)
+                scalp_score = round((buy_pressure_pct * 0.58) + (taker_buy_pct * 0.42), 1)
+                signal_ready = bool(
+                    buy_pressure_pct >= 57.5
+                    and taker_buy_pct >= 52.0
+                    and spread_pct <= 0.06
+                    and net_target_pct >= 0.45
+                )
+
+                if buy_pressure_pct >= 63.0 and taker_buy_pct >= 55.0:
+                    regime = "FORTE ABSORÇÃO COMPRADORA"
+                elif signal_ready:
+                    regime = "DEMANDA DOMINANTE (GATILHO)"
+                elif buy_pressure_pct <= 42.0:
+                    regime = "PRESSÃO VENDEDORA (EVITAR)"
+                else:
+                    regime = "EQUILÍBRIO / AGUARDANDO FLUXO"
+
+                return {
+                    "symbol": sym,
+                    "price": round(best_ask, 6),
+                    "spread_pct": round(spread_pct, 4),
+                    "bids_usd": round(bids_usd, 0),
+                    "asks_usd": round(asks_usd, 0),
+                    "buy_pressure_pct": round(buy_pressure_pct, 1),
+                    "sell_pressure_pct": round(sell_pressure_pct, 1),
+                    "obi_pct": round(obi_pct, 1),
+                    "taker_buy_pct": round(taker_buy_pct, 1),
+                    "bid_wall_price": round(bid_wall_price, 6),
+                    "bid_wall_usd": round(bid_wall_usd, 0),
+                    "ask_wall_price": round(ask_wall_price, 6),
+                    "ask_wall_usd": round(ask_wall_usd, 0),
+                    "entry_price": round(best_ask, 6),
+                    "stop_price": round(stop_price, 6),
+                    "take_profit_price": round(tp_price, 6),
+                    "risk_pct": round(risk_pct, 2),
+                    "net_target_pct": round(net_target_pct, 2),
+                    "scalp_score": scalp_score,
+                    "signal_ready": signal_ready,
+                    "regime": regime,
+                }
+            except Exception as exc:
+                logger.debug(f"[{sym}] Erro ao analisar Order Book: {exc}")
+                return None
+
+        results = await asyncio.gather(*(_analyze_one(s) for s in symbols[:16]))
+        valid = [r for r in results if r is not None]
+        valid.sort(key=lambda x: x["scalp_score"], reverse=True)
+        return valid
+
