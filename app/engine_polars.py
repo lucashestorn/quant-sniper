@@ -340,6 +340,76 @@ def _build_strategies_catalog() -> List[Dict[str, Any]]:
                 & (pl.col("rsi_14") > 26.0)
             ),
         },
+        # 7. Sniper Alta Precisão (Spring de Liquidez VWAP + Absorção + Filtro ATR)
+        {
+            "id": "sniper_precision_spring_long",
+            "name": "Sniper Alta Precisão: Spring VWAP + Absorção",
+            "direction": "LONG",
+            "atr_stop_mult": 0.45,
+            "rr_ratio": 2.1,
+            "max_bars": 22,
+            "expr": (
+                (pl.col("bb_zscore") <= -1.95)
+                & (pl.col("rsi_14") <= 31.0)
+                & (pl.col("lower_wick_pct") >= 0.35)
+                & (pl.col("vol_ratio") >= 1.40)
+                & ((pl.col("atr_14") / pl.col("close")) >= 0.0020)
+            ),
+        },
+        {
+            "id": "sniper_precision_spring_short",
+            "name": "Sniper Alta Precisão: Exaustão Topo + Rejeição",
+            "direction": "SHORT",
+            "atr_stop_mult": 0.45,
+            "rr_ratio": 2.1,
+            "max_bars": 22,
+            "expr": (
+                (pl.col("bb_zscore") >= 1.95)
+                & (pl.col("rsi_14") >= 69.0)
+                & (pl.col("upper_wick_pct") >= 0.35)
+                & (pl.col("vol_ratio") >= 1.40)
+                & ((pl.col("atr_14") / pl.col("close")) >= 0.0020)
+            ),
+        },
+        # 8. Sniper Explosão Microestrutural (Alinhamento Triplo EMA/SMA + Volume Institucional)
+        {
+            "id": "sniper_precision_flow_long",
+            "name": "Sniper Alta Precisão: Explosão de Fluxo Institucional",
+            "direction": "LONG",
+            "atr_stop_mult": 0.55,
+            "rr_ratio": 2.2,
+            "max_bars": 20,
+            "expr": (
+                (pl.col("ema_9") > pl.col("ema_21"))
+                & (pl.col("ema_21") > pl.col("sma_50"))
+                & (pl.col("close") > pl.col("donchian_high_20"))
+                & (pl.col("vol_ratio") >= 1.65)
+                & (pl.col("body_pct") >= 0.62)
+                & (pl.col("upper_wick_pct") <= 0.22)
+                & (pl.col("rsi_14") >= 55.0)
+                & (pl.col("rsi_14") <= 72.0)
+                & ((pl.col("atr_14") / pl.col("close")) >= 0.0020)
+            ),
+        },
+        {
+            "id": "sniper_precision_flow_short",
+            "name": "Sniper Alta Precisão: Quebra de Fluxo Institucional",
+            "direction": "SHORT",
+            "atr_stop_mult": 0.55,
+            "rr_ratio": 2.2,
+            "max_bars": 20,
+            "expr": (
+                (pl.col("ema_9") < pl.col("ema_21"))
+                & (pl.col("ema_21") < pl.col("sma_50"))
+                & (pl.col("close") < pl.col("donchian_low_20"))
+                & (pl.col("vol_ratio") >= 1.65)
+                & (pl.col("body_pct") >= 0.62)
+                & (pl.col("lower_wick_pct") <= 0.22)
+                & (pl.col("rsi_14") <= 45.0)
+                & (pl.col("rsi_14") >= 28.0)
+                & ((pl.col("atr_14") / pl.col("close")) >= 0.0020)
+            ),
+        },
     ]
 
 
@@ -516,8 +586,9 @@ def simulate_strategy_30d(
     net_profit_real = float(np.sum(net_arr))
     edge_per_trade = net_profit_real / total_trades
 
-    # Hard Constraint #2 e #4: Lucro Líquido Real > 0 e Edge >= 0.15%
-    if net_profit_real <= 0.0 or edge_per_trade < 0.15:
+    # Hard Constraint #2 e #4: Lucro Líquido Real > 0 e Edge mínimo calibrado por precisão
+    min_edge_req = 0.18 if timeframe == "5m" else 0.15
+    if net_profit_real <= 0.0 or edge_per_trade < min_edge_req:
         return None
 
     wins = net_arr[net_arr > 0]
@@ -527,11 +598,15 @@ def simulate_strategy_30d(
 
     profit_factor = (sum_wins / sum_losses) if sum_losses > 0 else (9.99 if sum_wins > 0 else 0.0)
 
-    # Hard Constraint #3: Profit Factor >= min_pf (1.35 na calibração Walk-Forward)
-    if profit_factor < min_pf:
+    # Hard Constraint #3: Profit Factor >= min_pf (e trava de precisão no 5m >= 1.30)
+    effective_min_pf = max(min_pf, 1.30) if timeframe == "5m" else min_pf
+    if profit_factor < effective_min_pf:
         return None
 
     win_rate_pct = (len(wins) / total_trades) * 100.0
+    # Trava de precisão de taxa de acerto no 5m (mínimo 45% de Win Rate)
+    if timeframe == "5m" and win_rate_pct < 45.0:
+        return None
 
     # Cálculo do Max Drawdown Real (base 100%)
     equity = 100.0 + np.cumsum(net_arr)
@@ -539,11 +614,12 @@ def simulate_strategy_30d(
     drawdowns = np.maximum(0.0, peaks - equity)
     max_drawdown_pct = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
 
-    # Fórmula de Ranking Determinístico (quant_score)
+    # Fórmula de Ranking Determinístico (quant_score ponderado por Precisão/WinRate e Profit Factor)
     quant_score = (
         (net_profit_real / max(max_drawdown_pct, 1.0))
         * math.log(max(total_trades, 2))
-        * (win_rate_pct / 100.0)
+        * ((win_rate_pct / 100.0) ** 1.25)
+        * min(profit_factor / 1.35, 3.0)
     )
 
     return {

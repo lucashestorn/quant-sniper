@@ -68,7 +68,7 @@ class SniperRuntimeState:
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
         self.lookback_days: int = int(os.getenv("LOOKBACK_DAYS", "15"))
         self.timeframe_filter: str = os.getenv("TIMEFRAME_FILTER", "ALL").upper()
-        self.timeframes: List[str] = ["15m", "30m", "1h"]
+        self.timeframes: List[str] = ["5m", "15m", "30m", "1h"]
 
         self.wallet_balance: Dict[str, Any] = {
             "total_usdt": 0.0,
@@ -118,7 +118,9 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 def _determine_closed_timeframes(now_utc: datetime) -> List[str]:
     minute = now_utc.minute
-    closed = ["15m"]
+    closed = ["5m"]
+    if minute % 15 == 0:
+        closed.append("15m")
     if minute in (0, 30):
         closed.append("30m")
     if minute == 0:
@@ -132,9 +134,9 @@ def _determine_closed_timeframes(now_utc: datetime) -> List[str]:
 
 def _get_active_timeframes() -> List[str]:
     tf_filter = state.timeframe_filter.lower()
-    if tf_filter in ("15m", "30m", "1h"):
+    if tf_filter in ("5m", "15m", "30m", "1h"):
         return [tf_filter]
-    return ["15m", "30m", "1h"]
+    return ["5m", "15m", "30m", "1h"]
 
 
 def _recompute_champions_sync() -> Dict[str, Dict[str, Any]]:
@@ -214,7 +216,8 @@ async def run_walk_forward_calibration() -> None:
             try:
                 ohlcv_by_tf: Dict[str, List[List[float]]] = {}
                 for tf in state.timeframes:
-                    candles = await executor.fetch_ohlcv_days(symbol=symbol, timeframe=tf, days=30)
+                    fetch_days = 15 if tf == "5m" else 30
+                    candles = await executor.fetch_ohlcv_days(symbol=symbol, timeframe=tf, days=fetch_days)
                     ohlcv_by_tf[tf] = candles
                 state.ohlcv_cache[symbol] = ohlcv_by_tf
             except Exception as sym_exc:
@@ -382,7 +385,7 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(
         run_candle_close_sniper,
-        trigger=CronTrigger(minute="0,15,30,45", second="1", timezone="UTC"),
+        trigger=CronTrigger(minute="0,5,10,15,20,25,30,35,40,45,50,55", second="1", timezone="UTC"),
         id="candle_close_sniper",
         replace_existing=True,
         max_instances=1,
@@ -509,7 +512,7 @@ async def toggle_bot(
         if payload.timeframe_filter is not None:
             tf_raw = payload.timeframe_filter.strip()
             new_tf = "ALL" if tf_raw.upper() == "ALL" else tf_raw.lower()
-            if new_tf in ("ALL", "15m", "30m", "1h") and new_tf != state.timeframe_filter:
+            if new_tf in ("ALL", "5m", "15m", "30m", "1h") and new_tf != state.timeframe_filter:
                 state.timeframe_filter = new_tf
                 recompute_needed = True
                 changes.append(f"Timeframe={state.timeframe_filter}")
