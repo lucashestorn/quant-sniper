@@ -1,0 +1,50 @@
+{
+  "name": "Quant Sniper 24/7",
+  "short_name": "QuantSniper",
+  "description": "Terminal Quantitativo 24/7 de Scalp Book L2 e Sniper de Velas",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "lang": "pt-BR",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "⚡ Terminal Scalp",
+      "short_name": "Scalp",
+      "description": "Abrir Terminal Scalp L2",
+      "url": "/#scalp",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "🎯 Terminal Sniper",
+      "short_name": "Sniper",
+      "description": "Abrir Terminal Sniper Velas",
+      "url": "/#sniper",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

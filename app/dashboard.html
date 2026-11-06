@@ -2,8 +2,19 @@
 <html lang="pt-BR" class="dark">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Quant Terminal Sniper 24/7 — Painel de Execução & Controle</title>
+    
+    <!-- PWA & Mobile Meta Tags -->
+    <meta name="theme-color" content="#070b14" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Quant Sniper" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -63,6 +74,11 @@
                     <span>Recalibrar 30D</span>
                 </button>
 
+                <button onclick="installPWA()" id="headerBtnPwa" class="px-3 py-1.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600 text-xs font-bold text-emerald-300 flex items-center gap-1.5 transition shadow">
+                    <i data-lucide="smartphone" class="w-3.5 h-3.5 text-emerald-400"></i>
+                    <span>App Mobile</span>
+                </button>
+
                 <button onclick="toggleKillSwitch()" id="btnKillSwitch" class="px-4 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition shadow-lg">
                     <span class="w-2 h-2 rounded-full bg-current animate-pulse"></span>
                     <span id="killSwitchText">CARREGANDO...</span>
@@ -117,9 +133,11 @@
                         <span id="kpiUnrealizedPnl" class="text-lg font-extrabold mono text-slate-300">$0.00</span>
                     </div>
                 </div>
-                <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span class="text-slate-400">Trava Anti-Correlação:</span>
-                    <span id="kpiSlotStatus" class="mono font-bold text-emerald-400">VAGAS DISPONÍVEIS</span>
+                <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] mono">
+                    <span class="text-slate-400">Vagas Dedicadas:</span>
+                    <span class="font-bold text-slate-300">
+                        ⚡ Scalp: <span id="kpiScalpSlotBadge" class="text-emerald-400">0/1</span> | 🎯 Sniper: <span id="kpiSniperSlotBadge" class="text-emerald-400">0/1</span>
+                    </span>
                 </div>
             </div>
 
@@ -639,6 +657,54 @@
         </div>
     </div>
 
+    <!-- BANNER PWA MOBILE: INSTALAR APP NO CELULAR -->
+    <div id="pwaInstallBanner" class="hidden fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:bottom-6 sm:max-w-md z-50 p-3.5 rounded-2xl bg-gradient-to-r from-slate-900/95 via-blue-950/95 to-slate-900/95 border border-amber-500/40 shadow-2xl backdrop-blur-md flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+            <img src="/icon-192.png" alt="App Icon" class="w-10 h-10 rounded-xl shadow border border-amber-500/40" />
+            <div>
+                <h4 class="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>Instalar Quant Sniper</span>
+                    <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] mono font-extrabold">APP MOBILE</span>
+                </h4>
+                <p class="text-[11px] text-slate-300">Acompanhe e controle seus trades 24/7 direto na tela inicial.</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+            <button onclick="installPWA()" id="btnInstallPwa" class="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs shadow transition">
+                Instalar
+            </button>
+            <button onclick="dismissPwaBanner()" class="p-1 rounded text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- MODAL DE INSTRUÇÕES DE INSTALAÇÃO NO IOS / SAFARI -->
+    <div id="iosInstallModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="card-glass rounded-2xl max-w-sm w-full p-6 border border-slate-700 shadow-2xl space-y-4 text-center">
+            <div class="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 mx-auto flex items-center justify-center text-amber-400">
+                <i data-lucide="smartphone" class="w-8 h-8"></i>
+            </div>
+            <div>
+                <h3 class="text-base font-bold text-white">Instalar App no iPhone / Safari</h3>
+                <p class="text-xs text-slate-300 mt-1">Como o iOS não permite instalação automática direta com 1 clique, siga os 2 passos rápidos:</p>
+            </div>
+            <div class="text-left bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 space-y-2.5 text-xs">
+                <div class="flex items-center gap-2 text-slate-200">
+                    <span class="w-5 h-5 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-[11px]">1</span>
+                    <span>Toque no botão <strong>Compartilhar</strong> (ícone de quadrado com seta para cima ⎋) na barra do Safari.</span>
+                </div>
+                <div class="flex items-center gap-2 text-slate-200">
+                    <span class="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-[11px]">2</span>
+                    <span>Role para baixo e selecione <strong>"Adicionar à Tela de Início"</strong>.</span>
+                </div>
+            </div>
+            <button onclick="closeIosInstallModal()" class="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition shadow-lg">
+                Entendi, Fechar
+            </button>
+        </div>
+    </div>
+
     <script>
         let currentStatus = null;
         let formInitialized = false;
@@ -904,19 +970,39 @@
             // Open Positions KPI
             const openPos = data.open_positions || [];
             const maxPos = data.max_concurrent_positions || 2;
+            const maxScalp = Number(data.max_scalp_positions || 1);
+            const maxSniper = Number(data.max_sniper_positions || 1);
+            const scalpCount = Number(data.scalp_positions_count !== undefined ? data.scalp_positions_count : openPos.filter(p => (p.mode || '').includes('SCALP')).length);
+            const sniperCount = Number(data.sniper_positions_count !== undefined ? data.sniper_positions_count : openPos.filter(p => !(p.mode || '').includes('SCALP')).length);
+
             document.getElementById('kpiOpenCount').innerText = `${openPos.length} / ${maxPos}`;
             const totalUnrealized = openPos.reduce((acc, p) => acc + Number(p.unrealized_pnl || 0), 0);
             const pnlEl = document.getElementById('kpiUnrealizedPnl');
             pnlEl.innerText = `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toFixed(2)}`;
             pnlEl.className = `text-lg font-extrabold mono ${totalUnrealized > 0 ? 'text-emerald-400' : totalUnrealized < 0 ? 'text-rose-400' : 'text-slate-300'}`;
 
+            const elScalpSlot = document.getElementById('kpiScalpSlotBadge');
+            if (elScalpSlot) {
+                elScalpSlot.innerText = `${scalpCount}/${maxScalp}`;
+                elScalpSlot.className = scalpCount >= maxScalp ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold';
+            }
+            const elSniperSlot = document.getElementById('kpiSniperSlotBadge');
+            if (elSniperSlot) {
+                elSniperSlot.innerText = `${sniperCount}/${maxSniper}`;
+                elSniperSlot.className = sniperCount >= maxSniper ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold';
+            }
+
             const slotStatus = document.getElementById('kpiSlotStatus');
             if (openPos.length >= maxPos) {
-                slotStatus.innerText = 'TRAVA ATIVA (LOTADO)';
-                slotStatus.className = 'mono font-bold text-amber-400';
+                if (slotStatus) {
+                    slotStatus.innerText = 'TRAVA ATIVA (LOTADO)';
+                    slotStatus.className = 'mono font-bold text-amber-400';
+                }
             } else {
-                slotStatus.innerText = `${maxPos - openPos.length} VAGA(S) LIVRE(S)`;
-                slotStatus.className = 'mono font-bold text-emerald-400';
+                if (slotStatus) {
+                    slotStatus.innerText = `${maxPos - openPos.length} VAGA(S) LIVRE(S)`;
+                    slotStatus.className = 'mono font-bold text-emerald-400';
+                }
             }
 
             // Order Sizing KPI
@@ -994,7 +1080,7 @@
 
             const scalpBadge = document.getElementById('scalpOpenPosBadge');
             if (scalpBadge) {
-                scalpBadge.innerText = `${openPos.length} / ${maxPos} posições ativas`;
+                scalpBadge.innerText = `${scalpCount} / ${maxScalp} vaga(s) Scalp ativa(s)`;
             }
             const tbodyScalpPos = document.getElementById('tableScalpOpenPositions');
             if (tbodyScalpPos) {
@@ -1066,7 +1152,7 @@
             }
 
             // Render Open Positions Table (Sniper tab)
-            document.getElementById('openPosBadge').innerText = `${openPos.length} ativas`;
+            document.getElementById('openPosBadge').innerText = `${sniperCount} / ${maxSniper} vaga(s) Sniper ativa(s)`;
             const tbodyPos = document.getElementById('tableOpenPositions');
             if (openPos.length === 0) {
                 tbodyPos.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500">Nenhuma posição aberta na corretora no momento.</td></tr>`;
@@ -1284,6 +1370,67 @@
                 }
             } finally {
                 btn.innerText = 'Conectar & Validar Saldo';
+            }
+        }
+
+        // ==========================================
+        // PWA (PROGRESSIVE WEB APP) MOBILE LOGIC
+        // ==========================================
+        let deferredPrompt = null;
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').then((reg) => {
+                    console.log('Quant Sniper PWA Service Worker registrado:', reg.scope);
+                }).catch((err) => {
+                    console.warn('Erro ao registrar Service Worker:', err);
+                });
+            });
+        }
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            const banner = document.getElementById('pwaInstallBanner');
+            if (banner) banner.classList.remove('hidden');
+        });
+
+        async function installPWA() {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    dismissPwaBanner();
+                }
+                deferredPrompt = null;
+            } else {
+                const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+                if (isIos) {
+                    showIosInstallModal();
+                } else {
+                    alert('Para instalar o App no seu celular:\n1. No Android (Chrome): clique no menu ⋮ ➡️ "Instalar aplicativo" ou "Adicionar à tela inicial".\n2. No iPhone (Safari): clique em Compartilhar ⎋ ➡️ "Adicionar à Tela de Início".');
+                }
+            }
+        }
+
+        function dismissPwaBanner() {
+            const banner = document.getElementById('pwaInstallBanner');
+            if (banner) banner.classList.add('hidden');
+        }
+
+        function showIosInstallModal() {
+            const m = document.getElementById('iosInstallModal');
+            if (m) {
+                m.classList.remove('hidden');
+                m.classList.add('flex');
+            }
+        }
+
+        function closeIosInstallModal() {
+            const m = document.getElementById('iosInstallModal');
+            if (m) {
+                m.classList.add('hidden');
+                m.classList.remove('flex');
             }
         }
 

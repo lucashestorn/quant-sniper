@@ -21,7 +21,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from app.engine_polars import (
@@ -46,6 +46,8 @@ DASHBOARD_HTML_PATH = Path(__file__).parent / "dashboard.html"
 class ToggleRequest(BaseModel):
     enabled: Optional[bool] = None
     max_concurrent_positions: Optional[int] = None
+    max_sniper_positions: Optional[int] = None
+    max_scalp_positions: Optional[int] = None
     order_margin_usdt: Optional[float] = None
     default_leverage: Optional[int] = None
     min_profit_factor: Optional[float] = None
@@ -71,6 +73,7 @@ class ScalpConfigRequest(BaseModel):
     scalp_sl_pct: Optional[float] = None
     scalp_target_mode: Optional[str] = None
     scalp_margin_usdt: Optional[float] = None
+    max_scalp_positions: Optional[int] = None
     orderbook_scalp_auto: Optional[bool] = None
     auto_momentum_exit: Optional[bool] = None
     max_hold_minutes: Optional[int] = None
@@ -88,7 +91,10 @@ class SniperRuntimeState:
 
     def __init__(self) -> None:
         self.enabled: bool = os.getenv("BOT_ENABLED", "true").lower() in ("true", "1", "yes")
-        self.max_concurrent_positions: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "2"))
+        # Vagas dedicadas e isoladas para cada modalidade (evita que o Scalp tome a vaga do Sniper ou vice-versa)
+        self.max_scalp_positions: int = int(os.getenv("MAX_SCALP_POSITIONS", "1"))
+        self.max_sniper_positions: int = int(os.getenv("MAX_SNIPER_POSITIONS", "1"))
+        self.max_concurrent_positions: int = self.max_scalp_positions + self.max_sniper_positions
         self.top_symbols_limit: int = int(os.getenv("TOP_SYMBOLS_LIMIT", "35"))
         self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "50000000"))
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
@@ -320,13 +326,14 @@ async def run_candle_close_sniper() -> None:
     state.wallet_balance = await executor.get_wallet_balance()
 
     open_symbols = {pos["symbol"] for pos in open_positions}
-    available_slots = max(0, state.max_concurrent_positions - len(open_positions))
+    sniper_positions = [p for p in open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]
+    available_slots = max(0, state.max_sniper_positions - len(sniper_positions))
 
     if available_slots <= 0:
         state.append_log(
             "ANTI_CORRELATION_LOCK",
-            f"Limite máximo atingido ({len(open_positions)}/{state.max_concurrent_positions} posições abertas). Novos disparos bloqueados.",
-            {"open_symbols": list(open_symbols)},
+            f"Vagas dedicadas do Sniper atingidas ({len(sniper_positions)}/{state.max_sniper_positions} abertas). Novos disparos de velas aguardando encerramento.",
+            {"open_symbols": [p["symbol"] for p in sniper_positions]},
         )
         return
 
@@ -529,6 +536,46 @@ async def serve_dashboard() -> HTMLResponse:
     return HTMLResponse(content="<h1>Quant Terminal Sniper Running</h1>")
 
 
+@app.get("/manifest.json")
+async def serve_manifest() -> Response:
+    p = Path(__file__).resolve().parent / "manifest.json"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"), media_type="application/manifest+json")
+    return Response(content="{}", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def serve_sw() -> Response:
+    p = Path(__file__).resolve().parent / "sw.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"), media_type="application/javascript")
+    return Response(content="// SW", media_type="application/javascript")
+
+
+@app.get("/icon.svg")
+async def serve_icon_svg() -> Response:
+    p = Path(__file__).resolve().parent / "icon.svg"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"), media_type="image/svg+xml")
+    return Response(content="", media_type="image/svg+xml")
+
+
+@app.get("/icon-192.png")
+async def serve_icon_192():
+    p = Path(__file__).resolve().parent / "icon-192.png"
+    if p.exists():
+        return FileResponse(p, media_type="image/png")
+    return await serve_icon_svg()
+
+
+@app.get("/icon-512.png")
+async def serve_icon_512():
+    p = Path(__file__).resolve().parent / "icon-512.png"
+    if p.exists():
+        return FileResponse(p, media_type="image/png")
+    return await serve_icon_svg()
+
+
 @app.get("/api/status")
 async def get_status() -> Dict[str, Any]:
     state.wallet_balance = await executor.get_wallet_balance()
@@ -544,6 +591,10 @@ async def get_status() -> Dict[str, Any]:
         "default_leverage": executor.default_leverage,
         "notional_per_trade_usdt": round(executor.order_margin_usdt * executor.default_leverage, 2),
         "max_concurrent_positions": state.max_concurrent_positions,
+        "max_scalp_positions": state.max_scalp_positions,
+        "max_sniper_positions": state.max_sniper_positions,
+        "scalp_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]),
+        "sniper_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]),
         "wallet_balance": state.wallet_balance,
         "open_positions_count": len(state.open_positions),
         "open_positions": state.open_positions,
@@ -610,6 +661,16 @@ async def toggle_bot(
         if payload.max_concurrent_positions is not None:
             state.max_concurrent_positions = max(1, int(payload.max_concurrent_positions))
             changes.append(f"MaxPos={state.max_concurrent_positions}")
+
+        if payload.max_sniper_positions is not None:
+            state.max_sniper_positions = max(1, min(10, int(payload.max_sniper_positions)))
+            state.max_concurrent_positions = state.max_scalp_positions + state.max_sniper_positions
+            changes.append(f"VagasSniper={state.max_sniper_positions}")
+
+        if payload.max_scalp_positions is not None:
+            state.max_scalp_positions = max(1, min(10, int(payload.max_scalp_positions)))
+            state.max_concurrent_positions = state.max_scalp_positions + state.max_sniper_positions
+            changes.append(f"VagasScalp={state.max_scalp_positions}")
 
         if payload.min_profit_factor is not None:
             new_pf = max(1.05, float(payload.min_profit_factor))
@@ -692,6 +753,10 @@ async def toggle_bot(
         "default_leverage": executor.default_leverage,
         "notional_per_trade_usdt": round(executor.order_margin_usdt * executor.default_leverage, 2),
         "max_concurrent_positions": state.max_concurrent_positions,
+        "max_scalp_positions": state.max_scalp_positions,
+        "max_sniper_positions": state.max_sniper_positions,
+        "scalp_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]),
+        "sniper_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]),
         "min_profit_factor": state.min_profit_factor,
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
@@ -806,6 +871,10 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
     if req.scalp_rotation_min_pnl is not None:
         executor.scalp_rotation_min_pnl = max(0.15, min(2.0, float(req.scalp_rotation_min_pnl)))
         changes.append(f"MinPnLRot=+{executor.scalp_rotation_min_pnl:.2f}%")
+    if req.max_scalp_positions is not None:
+        state.max_scalp_positions = max(1, min(10, int(req.max_scalp_positions)))
+        state.max_concurrent_positions = state.max_scalp_positions + state.max_sniper_positions
+        changes.append(f"VagasScalp={state.max_scalp_positions}")
 
     updated_open: List[str] = []
     if req.apply_to_open:
@@ -885,10 +954,11 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
     """Dispara uma ordem atômica de Scalp baseada nas paredes de liquidez do Livro de Ofertas."""
     open_positions = await executor.get_open_positions()
     state.open_positions = open_positions
-    if len(open_positions) >= state.max_concurrent_positions:
+    scalp_positions = [p for p in open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]
+    if len(scalp_positions) >= state.max_scalp_positions:
         return {
             "status": "blocked",
-            "message": f"Limite de posições simultâneas atingido ({len(open_positions)}/{state.max_concurrent_positions}).",
+            "message": f"Limite de vagas dedicadas de Scalp atingido ({len(scalp_positions)}/{state.max_scalp_positions}).",
         }
 
     order_receipt = await executor.execute_atomic_order(
@@ -940,7 +1010,8 @@ async def check_auto_scalp_and_rotation() -> None:
 
     open_positions = state.open_positions
     open_syms = {p["symbol"] for p in open_positions}
-    slots = max(0, state.max_concurrent_positions - len(open_positions))
+    scalp_positions = [p for p in open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]
+    slots = max(0, state.max_scalp_positions - len(scalp_positions))
 
     if slots > 0:
         for item in state.orderbook_cache:
@@ -959,7 +1030,7 @@ async def check_auto_scalp_and_rotation() -> None:
                     )
                 )
                 break
-    elif executor.scalp_rotation_enabled and len(open_positions) >= state.max_concurrent_positions:
+    elif executor.scalp_rotation_enabled and len(scalp_positions) >= state.max_scalp_positions:
         candidate = None
         for item in state.orderbook_cache:
             if (
@@ -974,7 +1045,7 @@ async def check_auto_scalp_and_rotation() -> None:
 
         if candidate:
             rotatable = []
-            for p in open_positions:
+            for p in scalp_positions:
                 p_pnl = float(p.get("pnl_pct") or 0.0)
                 p_age = float(p.get("age_minutes") or 0.0)
                 p_mom = float(p.get("live_buy_pressure_pct") or 50.0)
