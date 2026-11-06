@@ -1,0 +1,72 @@
+[
+  {
+    "timestamp_utc": "2026-11-06 00:00:00 UTC",
+    "timestamp_ts": 1793923200.0,
+    "time_label": "00:00",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Inicializa\u00e7\u00e3o da Carteira Spot"
+  },
+  {
+    "timestamp_utc": "2026-11-06 01:00:12 UTC",
+    "timestamp_ts": 1793926812.0,
+    "time_label": "01:00",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra ZEC/USDT [1h LONG @ 1327.61]"
+  },
+  {
+    "timestamp_utc": "2026-11-06 01:05:37 UTC",
+    "timestamp_ts": 1793927137.0,
+    "time_label": "01:05",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra XRP/USDT [BOOK-L2 LONG @ 1.2188]"
+  },
+  {
+    "timestamp_utc": "2026-11-06 01:39:01 UTC",
+    "timestamp_ts": 1793929141.0,
+    "time_label": "01:39",
+    "total_usdt": 18.52,
+    "scalp_pnl": 0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Venda UNI/USDT (MOMENTO_PASSOU_TOPO): +0.01$ (+0.13%)"
+  },
+  {
+    "timestamp_utc": "2026-11-06 01:39:24 UTC",
+    "timestamp_ts": 1793929164.0,
+    "time_label": "01:39",
+    "total_usdt": 18.52,
+    "scalp_pnl": 0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Venda ETH/USDT (MOMENTO_PASSOU_FLUXO_VIROU): -0.00$ (-0.01%)"
+  },
+  {
+    "timestamp_utc": "2026-11-06 01:45:00 UTC",
+    "timestamp_ts": 1793929500.0,
+    "time_label": "01:45",
+    "total_usdt": 18.5,
+    "scalp_pnl": -0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Liquida\u00e7\u00e3o Dust Spot (XAUT / ZEC): Saldo $18.50 USDT Livre"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:03:06 UTC",
+    "timestamp_ts": 1793930586.4840293,
+    "time_label": "02:03",
+    "total_usdt": 18.5,
+    "scalp_pnl": -0.01,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Venda BNB/USDT (MOMENTO_PASSOU_FLUXO_VIROU (Book Compra=33.0% | Tape=33.3%)): -0.00$ (-0.04%)"
+  }
+]

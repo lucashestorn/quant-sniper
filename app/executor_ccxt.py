@@ -13,6 +13,7 @@ Resolve em código:
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 import hashlib
 import hmac
@@ -30,6 +31,8 @@ import httpx
 logger = logging.getLogger("quant_sniper.executor_ccxt")
 
 BRACKETS_FILE_PATH = Path(__file__).parent.parent / "real_spot_brackets.json"
+CLOSED_TRADES_PATH = Path(__file__).parent.parent / "closed_trades.json"
+EQUITY_HISTORY_PATH = Path(__file__).parent.parent / "equity_history.json"
 
 TIMEFRAME_MS: Dict[str, int] = {
     "1m": 60_000,
@@ -120,6 +123,9 @@ class BinanceFuturesExecutor:
         self.shadow_positions: Dict[str, Dict[str, Any]] = {}
         # Rastreamento persistente de Entrada, Stop Loss e Take Profit para posições Reais Spot
         self.real_spot_brackets: Dict[str, Dict[str, Any]] = self._load_brackets()
+        # Histórico persistente de Trades Fechados e Curva de Capital (para Gráficos & Linha do Saldo)
+        self.closed_trades: List[Dict[str, Any]] = self._load_closed_trades()
+        self.equity_history: List[Dict[str, Any]] = self._load_equity_history()
         # Configurações de Auto-Venda Inteligente quando o momento passar
         self.auto_momentum_exit: bool = True
         self.max_hold_minutes: int = 12
@@ -145,6 +151,52 @@ class BinanceFuturesExecutor:
             )
         except Exception as exc:
             logger.debug(f"Aviso ao salvar real_spot_brackets.json: {exc}")
+
+    def _load_closed_trades(self) -> List[Dict[str, Any]]:
+        try:
+            if CLOSED_TRADES_PATH.exists():
+                return json.loads(CLOSED_TRADES_PATH.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug(f"Aviso ao carregar closed_trades.json: {exc}")
+        return []
+
+    def save_closed_trades(self) -> None:
+        try:
+            CLOSED_TRADES_PATH.write_text(
+                json.dumps(self.closed_trades[-200:], indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug(f"Aviso ao salvar closed_trades.json: {exc}")
+
+    def _load_equity_history(self) -> List[Dict[str, Any]]:
+        try:
+            if EQUITY_HISTORY_PATH.exists():
+                return json.loads(EQUITY_HISTORY_PATH.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug(f"Aviso ao carregar equity_history.json: {exc}")
+        now_utc = datetime.now(timezone.utc)
+        return [
+            {
+                "timestamp_utc": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "timestamp_ts": time.time(),
+                "time_label": now_utc.strftime("%H:%M"),
+                "total_usdt": 18.50,
+                "scalp_pnl": 0.0,
+                "sniper_pnl": 0.0,
+                "rocket_pnl": 0.0,
+                "last_event": "Inicialização da Carteira Spot",
+            }
+        ]
+
+    def save_equity_history(self) -> None:
+        try:
+            EQUITY_HISTORY_PATH.write_text(
+                json.dumps(self.equity_history[-300:], indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug(f"Aviso ao salvar equity_history.json: {exc}")
 
     async def _sync_server_time(self, force: bool = False) -> None:
         """Sincroniza o offset em milissegundos com o relógio oficial da Binance."""
@@ -810,6 +862,66 @@ class BinanceFuturesExecutor:
         self.save_brackets()
         entry_p = float(bkt.get("entry_price") or avg_exit)
         realized_pnl = (avg_exit - entry_p) * executed_qty
+        pos_mode = str(bkt.get("mode") or "SCALP_BOOK")
+        tf = str(bkt.get("timeframe") or ("BOOK-L2" if "SCALP" in pos_mode else "1h"))
+        opened_ts = float(bkt.get("opened_at_ts") or time.time())
+        duration_min = max(0.1, (time.time() - opened_ts) / 60.0)
+        pnl_pct = ((avg_exit - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+
+        horizon = bkt.get("horizon")
+        if not horizon:
+            if "SCALP" in pos_mode:
+                horizon = "Minutos (~1 a 12m)"
+            elif "ROCKET" in pos_mode:
+                horizon = "Minutos a Horas (~15m a 6h)"
+            else:
+                horizon = "Swing Trade (~4h a 48h)" if tf in ("1h", "4h") else "Day Trade (~15m a 2h)"
+
+        closed_item = {
+            "id": f"CLSD-{int(time.time() * 1000)}",
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "timestamp_ts": time.time(),
+            "time_label": datetime.now(timezone.utc).strftime("%H:%M"),
+            "symbol": sym_pair,
+            "mode": pos_mode,
+            "timeframe": tf,
+            "horizon": horizon,
+            "direction": "LONG",
+            "entry_price": round(entry_p, 6),
+            "exit_price": round(avg_exit, 6),
+            "sold_qty": round(executed_qty, 6),
+            "received_usdt": round(received_usdt, 2),
+            "realized_pnl": round(realized_pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "duration_minutes": round(duration_min, 1),
+            "reason": reason,
+        }
+        self.closed_trades.append(closed_item)
+        self.save_closed_trades()
+
+        # Atualiza a linha de saldo separada por modalidade para os gráficos
+        last_eq = self.equity_history[-1] if self.equity_history else {
+            "total_usdt": 18.50,
+            "scalp_pnl": 0.0,
+            "sniper_pnl": 0.0,
+            "rocket_pnl": 0.0,
+        }
+        scalp_pnl = round(last_eq.get("scalp_pnl", 0.0) + (realized_pnl if "SCALP" in pos_mode else 0.0), 2)
+        sniper_pnl = round(last_eq.get("sniper_pnl", 0.0) + (realized_pnl if "SNIPER" in pos_mode else 0.0), 2)
+        rocket_pnl = round(last_eq.get("rocket_pnl", 0.0) + (realized_pnl if "ROCKET" in pos_mode else 0.0), 2)
+        total_usdt = round(last_eq.get("total_usdt", 18.50) + realized_pnl, 2)
+
+        self.equity_history.append({
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "timestamp_ts": time.time(),
+            "time_label": datetime.now(timezone.utc).strftime("%H:%M"),
+            "total_usdt": total_usdt,
+            "scalp_pnl": scalp_pnl,
+            "sniper_pnl": sniper_pnl,
+            "rocket_pnl": rocket_pnl,
+            "last_event": f"Venda {sym_pair} ({reason}): {realized_pnl:+.2f}$ ({pnl_pct:+.2f}%)",
+        })
+        self.save_equity_history()
 
         logger.info(
             f"[{sym_pair}] [SPOT SELL {reason}] Vendido {executed_qty} {coin} -> ${received_usdt:.2f} USDT @ {avg_exit:.6f} (PnL: ${realized_pnl:+.2f})"
@@ -823,6 +935,8 @@ class BinanceFuturesExecutor:
             "entry_price": round(entry_p, 6),
             "exit_price": round(avg_exit, 6),
             "realized_pnl": round(realized_pnl, 2),
+            "horizon": horizon,
+            "mode": pos_mode,
         }
         self.last_closed_events.append(receipt)
         return receipt
@@ -942,18 +1056,37 @@ class BinanceFuturesExecutor:
                         elif stop_p > 0 and mark_p <= stop_p:
                             exit_reason = "STOP_LOSS"
                         elif self.auto_momentum_exit:
-                            # 2. Proteção de Lucro no Topo: se já subiu >= +0.25% mas perdeu força e devolveu > 40% do ganho (ou fluxo virou vendedor)
-                            if max_pnl_pct >= 0.25 and (
-                                (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
-                                or (live_buy_pct < 44.0 and live_taker_pct < 45.0 and pnl_pct >= 0.05)
-                            ):
-                                exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
-                            # 3. Virada Brusca de Fluxo no Book + Tape (Paredão Vendedor + Despejo no Tape após 1.5 min)
-                            elif age_min >= 1.5 and live_buy_pct <= 40.0 and live_taker_pct <= 42.0:
-                                exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book Compra={live_buy_pct}% | Tape={live_taker_pct}%)"
-                            # 4. Expiração de Tempo (Estagnação sem força compradora após max_hold_minutes)
-                            elif age_min >= float(self.max_hold_minutes) and (live_buy_pct < 49.0 or live_taker_pct < 47.0):
-                                exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f} min sem romper e fluxo fraco)"
+                            if pos_mode == "ROCKET_MEME":
+                                # Trailing Stop Escadinha para Memecoins / Rocket (10-15%+)
+                                if max_pnl_pct >= 10.0:
+                                    trailing_floor = max_pnl_pct - 2.5
+                                    if pnl_pct <= trailing_floor:
+                                        exit_reason = f"TRAILING_STOP_LUCRO (Pico +{max_pnl_pct:.2f}% -> Lucro Realizado +{pnl_pct:.2f}%)"
+                                elif max_pnl_pct >= 7.0:
+                                    if pnl_pct <= 4.0:
+                                        exit_reason = f"TRAILING_STOP_LUCRO (Pico +{max_pnl_pct:.2f}% -> Lucro Realizado +{pnl_pct:.2f}%)"
+                                elif max_pnl_pct >= 3.5:
+                                    if pnl_pct <= 0.20:
+                                        exit_reason = f"BREAKEVEN_PROTEGIDO (Pico +{max_pnl_pct:.2f}% -> Breakeven +{pnl_pct:.2f}%)"
+                                elif age_min >= 240 and pnl_pct < 0.5:
+                                    exit_reason = "ROCKET_EXPIRADO_4H (Sem rompimento em 4 horas)"
+                            elif pos_mode in ("SNIPER", "SNIPER_CANDLE"):
+                                # Swing Trade: protege breakeven se passar de +3.0%
+                                if max_pnl_pct >= 3.0 and pnl_pct <= 0.20:
+                                    exit_reason = f"SNIPER_BREAKEVEN (Pico +{max_pnl_pct:.2f}% -> Breakeven +{pnl_pct:.2f}%)"
+                            else:
+                                # 2. Proteção de Lucro no Topo para SCALP_BOOK
+                                if max_pnl_pct >= 0.25 and (
+                                    (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
+                                    or (live_buy_pct < 44.0 and live_taker_pct < 45.0 and pnl_pct >= 0.05)
+                                ):
+                                    exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
+                                # 3. Virada Brusca de Fluxo no Book + Tape (Paredão Vendedor + Despejo no Tape após 1.5 min)
+                                elif age_min >= 1.5 and live_buy_pct <= 40.0 and live_taker_pct <= 42.0:
+                                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book Compra={live_buy_pct}% | Tape={live_taker_pct}%)"
+                                # 4. Expiração de Tempo (Estagnação sem força compradora após max_hold_minutes)
+                                elif age_min >= float(self.max_hold_minutes) and (live_buy_pct < 49.0 or live_taker_pct < 47.0):
+                                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f} min sem romper e fluxo fraco)"
 
                         if exit_reason is not None:
                             try:
@@ -970,6 +1103,26 @@ class BinanceFuturesExecutor:
                             mom_status = f"🟠 FLUXO FRACO (Book {live_buy_pct:.0f}% | Tape {live_taker_pct:.0f}%)"
                         else:
                             mom_status = f"🟡 ESTÁVEL (Book {live_buy_pct:.0f}% | Tape {live_taker_pct:.0f}%)"
+
+                        # Computa perfil de horizonte temporal e alvo detalhado
+                        horizon_val = bkt.get("horizon")
+                        pos_tf = bkt.get("timeframe") or ("BOOK-L2" if "SCALP" in pos_mode else "1h")
+                        if not horizon_val:
+                            if "SCALP" in pos_mode:
+                                horizon_val = "Minutos (~1 a 12 min)"
+                                horizon_badge = "⚡ SCALP (MINUTOS)"
+                            elif "ROCKET" in pos_mode:
+                                horizon_val = "Minutos a Horas (~15 min a 6h)"
+                                horizon_badge = "🚀 ROCKET MEME (HORAS)"
+                            else:
+                                horizon_val = "Swing Trade (~4h a 48h)" if pos_tf in ("1h", "4h") else "Day Trade (~15m a 2h)"
+                                horizon_badge = "🎯 SWING (HORAS/DIAS)"
+                        else:
+                            horizon_badge = "⚡ SCALP (MINUTOS)" if "SCALP" in pos_mode else ("🚀 ROCKET MEME" if "ROCKET" in pos_mode else "🎯 SWING")
+
+                        target_usd_est = (tp_p - entry_p) * qty if (tp_p > entry_p and qty > 0) else 0.03
+                        risk_usd_est = (entry_p - stop_p) * qty if (entry_p > stop_p and qty > 0) else 0.02
+                        rr_label = f"1:{(tp_pct / sl_pct):.1f}" if sl_pct > 0 else "1:2.0"
 
                         spot_positions.append(
                             {
@@ -992,6 +1145,13 @@ class BinanceFuturesExecutor:
                                 "live_buy_pressure_pct": live_buy_pct,
                                 "live_taker_buy_pct": live_taker_pct,
                                 "momentum_status": mom_status,
+                                "horizon": horizon_val,
+                                "horizon_badge": horizon_badge,
+                                "target_usd": round(target_usd_est, 2),
+                                "risk_usd": round(risk_usd_est, 2),
+                                "rr_ratio_label": rr_label,
+                                "target_desc": f"+{tp_pct:.2f}% (+${target_usd_est:.2f} USDT)",
+                                "risk_desc": f"-{sl_pct:.2f}% (-${risk_usd_est:.2f} USDT)",
                                 "leverage": 1,
                                 "margin_mode": "spot",
                             }
@@ -1034,6 +1194,9 @@ class BinanceFuturesExecutor:
         leverage: Optional[int] = None,
         margin_usdt: Optional[float] = None,
         mode: str = "SNIPER_CANDLE",
+        timeframe: str = "15m",
+        strategy_name: str = "Sniper",
+        horizon: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.exchange is None:
             await self.initialize()
@@ -1045,6 +1208,14 @@ class BinanceFuturesExecutor:
         raw_symbol = symbol.split(":")[0].replace("/", "")
         notional_usdt = float(margin_usdt if margin_usdt is not None else self.order_margin_usdt)
 
+        if not horizon:
+            if "SCALP" in mode:
+                horizon = "Minutos (~1 a 12m)"
+            elif "ROCKET" in mode:
+                horizon = "Minutos a Horas (~15m a 6h)"
+            else:
+                horizon = "Swing Trade (~4h a 48h)" if timeframe in ("1h", "4h") else "Day Trade (~15m a 2h)"
+
         if self.market_type == "spot":
             if direction.upper() != "LONG":
                 raise RuntimeError(f"[{symbol}] Modo SPOT opera exclusivamente sinais LONG.")
@@ -1053,7 +1224,7 @@ class BinanceFuturesExecutor:
 
             logger.info(
                 f"[{symbol}] [SPOT {mode}] Comprando ${notional_usdt:.2f} USDT a mercado (quoteOrderQty) | "
-                f"SL: {stop_price:.6f} | TP: {take_profit_price:.6f}"
+                f"SL: {stop_price:.6f} | TP: {take_profit_price:.6f} | Perfil: {horizon}"
             )
             try:
                 if self.shadow_mode_active:
@@ -1084,15 +1255,40 @@ class BinanceFuturesExecutor:
                     "stop_price": round(adj_stop, 6),
                     "take_profit_price": round(adj_tp, 6),
                     "mode": mode,
+                    "timeframe": timeframe,
+                    "strategy_name": strategy_name,
+                    "horizon": horizon,
                     "max_price": float(avg_entry),
                     "opened_at_ts": time.time(),
                 }
                 self.save_brackets()
 
+                # Registra evento de compra na linha de saldo / curva de capital
+                last_eq = self.equity_history[-1] if self.equity_history else {
+                    "total_usdt": 18.50,
+                    "scalp_pnl": 0.0,
+                    "sniper_pnl": 0.0,
+                    "rocket_pnl": 0.0,
+                }
+                self.equity_history.append({
+                    "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "timestamp_ts": time.time(),
+                    "time_label": datetime.now(timezone.utc).strftime("%H:%M"),
+                    "total_usdt": last_eq.get("total_usdt", 18.50),
+                    "scalp_pnl": last_eq.get("scalp_pnl", 0.0),
+                    "sniper_pnl": last_eq.get("sniper_pnl", 0.0),
+                    "rocket_pnl": last_eq.get("rocket_pnl", 0.0),
+                    "last_event": f"Compra {symbol} [{direction} @ {avg_entry:.4f}]",
+                })
+                self.save_equity_history()
+
                 return {
                     "symbol": symbol,
                     "direction": "LONG",
                     "mode": mode,
+                    "timeframe": timeframe,
+                    "strategy_name": strategy_name,
+                    "horizon": horizon,
                     "leverage": 1,
                     "margin_usdt": round(cummulative_quote, 2),
                     "margin_mode": "spot",

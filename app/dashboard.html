@@ -17,6 +17,7 @@
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             background-color: #070b14;
@@ -182,28 +183,41 @@
             </div>
         </section>
 
-        <!-- BARRA DE NAVEGAÇÃO: TERMINAIS SEPARADOS (SCALP BOOK L2 vs SNIPER VELAS) -->
+        <!-- BARRA DE NAVEGAÇÃO: TERMINAIS SEPARADOS (SCALP vs SNIPER vs ROCKET MEMES vs GRÁFICOS) -->
         <section class="card-glass rounded-xl p-2.5 border border-slate-700/80 flex flex-wrap items-center justify-between gap-3">
             <div class="flex flex-wrap items-center gap-2">
                 <button onclick="switchTerminalTab('scalp')" id="tabBtnScalp"
-                    class="px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg">
+                    class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg">
                     <i data-lucide="zap" class="w-4 h-4"></i>
-                    <span>⚡ TERMINAL SCALP SEPARADO (Livro de Ofertas L2 & Saída Rápida)</span>
+                    <span>⚡ SCALP L2 (Minutos)</span>
                 </button>
                 <button onclick="switchTerminalTab('sniper')" id="tabBtnSniper"
-                    class="px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                    class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
                     <i data-lucide="crosshair" class="w-4 h-4"></i>
-                    <span>🎯 TERMINAL SNIPER (Velas Walk-Forward 5m / 15m / 30m / 1h)</span>
+                    <span>🎯 SNIPER (Swing 1h/4h)</span>
+                </button>
+                <button onclick="switchTerminalTab('rocket')" id="tabBtnRocket"
+                    class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700">
+                    <i data-lucide="rocket" class="w-4 h-4 text-purple-400"></i>
+                    <span>🚀 ROCKET MEMES (10-15%+)</span>
+                </button>
+                <button onclick="switchTerminalTab('charts')" id="tabBtnCharts"
+                    class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700">
+                    <i data-lucide="line-chart" class="w-4 h-4 text-emerald-400"></i>
+                    <span>📈 GRÁFICOS & PERFORMANCE</span>
                 </button>
                 <button onclick="switchTerminalTab('both')" id="tabBtnBoth"
                     class="px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800">
                     <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
-                    <span>Visão Dupla</span>
+                    <span>Visão Geral</span>
                 </button>
             </div>
             <div class="flex items-center gap-2 text-xs mono pr-2">
-                <span class="px-2.5 py-1 rounded bg-emerald-950/90 border border-emerald-800 text-emerald-300 font-bold" id="scalpActiveTargetBadge">
-                    Alvo Venda Scalp: +0.50% Bruto (+0.39% Líq.) | Stop: -0.35%
+                <span class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-slate-300 font-bold" id="kpiPartitionSlots">
+                    ⚡ Scalp: 1/1 | 🎯 Sniper: 1/1 | 🚀 Meme: 1/1
+                </span>
+                <span class="px-2.5 py-1 rounded bg-emerald-950/90 border border-emerald-800 text-emerald-300 font-bold hidden sm:inline" id="scalpActiveTargetBadge">
+                    Alvo Scalp: +0.50% | SL: -0.35%
                 </span>
             </div>
         </section>
@@ -594,6 +608,167 @@
                 </section>
             </div>
         </div>
+
+        <!-- ========================================================================= -->
+        <!-- ÁREA 3: TERMINAL ROCKET MEMES — ALTA VOLATILIDADE & ALVOS 10-15%+         -->
+        <!-- ========================================================================= -->
+        <div id="workspaceRocket" class="space-y-5 hidden">
+            <section class="card-glass rounded-xl p-4 border border-purple-500/40 bg-gradient-to-r from-slate-900/95 via-slate-900/90 to-purple-950/25">
+                <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-2 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-400">
+                            <i data-lucide="rocket" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xs font-extrabold uppercase tracking-wider text-white flex items-center gap-2">
+                                Terminal Rocket Memes — Caçador de Explosões em Tempo Real
+                                <span class="px-2 py-0.5 rounded bg-purple-900/80 text-purple-300 border border-purple-700 text-[10px] font-bold">ALVOS 10% A 15%+</span>
+                            </h2>
+                            <p class="text-[11px] text-slate-400">
+                                Monitora anomalias de volume e rompimento de máximas nas Top Memecoins da Binance Spot (<code class="text-purple-300">PEPE</code>, <code class="text-purple-300">DOGE</code>, <code class="text-purple-300">SHIB</code>, <code class="text-purple-300">WIF</code>, <code class="text-purple-300">BONK</code>, <code class="text-purple-300">FLOKI</code>) com <strong>Trailing Stop Escadinha</strong>.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs mono">
+                        <span class="px-3 py-1.5 rounded-lg bg-purple-950/90 border border-purple-700 text-purple-300 font-bold" id="rocketStatusBadge">
+                            🚀 Vaga Rocket: 0 / 1 ativa ($5.25)
+                        </span>
+                    </div>
+                </div>
+
+                <!-- CARDS EXPLICATIVOS DO TRAILING STOP ESCADINHA -->
+                <div class="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div class="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                        <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">1. Entrada de Ignição</div>
+                        <div class="text-xs font-bold text-white mb-0.5">Volume 15m &ge; 1.6x + Topo</div>
+                        <p class="text-[10px] text-slate-400">Stop inicial em -2.5% (Risco máximo de apenas $0.13 de dólar).</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/80 border border-emerald-900/50">
+                        <div class="text-[10px] text-emerald-400 font-bold uppercase mb-1">2. Breakeven Protegido</div>
+                        <div class="text-xs font-bold text-emerald-300 mb-0.5">Bateu +3.5% Lucro</div>
+                        <p class="text-[10px] text-slate-400">Stop sobe para +0.20% automaticamente. <strong>Risco ZERO garantido!</strong></p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/80 border border-amber-900/50">
+                        <div class="text-[10px] text-amber-400 font-bold uppercase mb-1">3. Trava de Lucro</div>
+                        <div class="text-xs font-bold text-amber-300 mb-0.5">Bateu +7.0% Lucro</div>
+                        <p class="text-[10px] text-slate-400">Stop trava em +4.0% de ganho líquido, blindando o capital.</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/80 border border-purple-800/60">
+                        <div class="text-[10px] text-purple-400 font-bold uppercase mb-1">4. Trailing Dinâmico</div>
+                        <div class="text-xs font-bold text-purple-300 mb-0.5">Bateu +10% a +15%+</div>
+                        <p class="text-[10px] text-slate-400">Persegue a máxima a 2.5% de folga até embolsar o topo da pernada!</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- ========================================================================= -->
+        <!-- ÁREA 4: ABA DE GRÁFICOS & PERFORMANCE (COMPRAS, VENDAS & LINHA DO SALDO)   -->
+        <!-- ========================================================================= -->
+        <div id="workspaceCharts" class="space-y-5 hidden">
+            <!-- CARDS DE PERFORMANCE RESUMIDA -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="card-glass rounded-xl p-4 flex flex-col justify-between border border-emerald-500/30">
+                    <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Saldo Total da Carteira</div>
+                    <div class="mt-2 text-2xl font-black text-white mono" id="chartCardTotalBalance">$18.50</div>
+                    <div class="text-[11px] text-emerald-400 font-semibold mt-1">Conta Real Spot Sincronizada</div>
+                </div>
+                <div class="card-glass rounded-xl p-4 flex flex-col justify-between border border-blue-500/30">
+                    <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Lucro Realizado Total</div>
+                    <div class="mt-2 text-2xl font-black text-emerald-400 mono" id="chartCardTotalRealizedPnl">+$0.01</div>
+                    <div class="text-[11px] text-slate-400 mt-1" id="chartCardWinRate">Taxa de Acerto: 100% (Green)</div>
+                </div>
+                <div class="card-glass rounded-xl p-4 flex flex-col justify-between border border-amber-500/30">
+                    <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Lucro Acumulado Scalp</div>
+                    <div class="mt-2 text-2xl font-black text-amber-400 mono" id="chartCardScalpPnl">+$0.01</div>
+                    <div class="text-[11px] text-slate-400 mt-1" id="chartCardScalpCount">⚡ Livro L2 & Saída Rápida</div>
+                </div>
+                <div class="card-glass rounded-xl p-4 flex flex-col justify-between border border-purple-500/30">
+                    <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Lucro Trades (Sniper & Memes)</div>
+                    <div class="mt-2 text-2xl font-black text-purple-300 mono" id="chartCardSniperPnl">$0.00</div>
+                    <div class="text-[11px] text-slate-400 mt-1">🎯 Swing 1h & 🚀 Memes</div>
+                </div>
+            </div>
+
+            <!-- GRÁFICO 1: LINHA DO SALDO SEPARADA (TOTAL vs SCALP vs TRADES vs MEMES) -->
+            <section class="card-glass rounded-xl p-4 border border-slate-700">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                            <i data-lucide="trending-up" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                                Curva de Patrimônio & Linha do Saldo Separada por Modalidade
+                            </h3>
+                            <p class="text-[11px] text-slate-400">
+                                Acompanhe visualmente a evolução do seu capital total e o retorno separado de cada estratégia (<span class="text-emerald-400">Total</span>, <span class="text-amber-400">⚡ Scalp</span>, <span class="text-sky-400">🎯 Sniper Trades</span> e <span class="text-purple-400">🚀 Memes</span>).
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs mono">
+                        <span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-bold">TEMPO REAL</span>
+                    </div>
+                </div>
+                <div class="w-full h-72 relative">
+                    <canvas id="chartEquityCurves"></canvas>
+                </div>
+            </section>
+
+            <!-- GRÁFICO 2: MARCADORES VISUAIS DE COMPRAS E VENDAS -->
+            <section class="card-glass rounded-xl p-4 border border-slate-700">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-400">
+                            <i data-lucide="activity" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                                Marcadores Visuais de Execuções: Compras (🟢) vs Vendas (🔴 / 🟣)
+                            </h3>
+                            <p class="text-[11px] text-slate-400">
+                                Veja exatamente onde o robô comprou, onde vendeu e o percentual de lucro capturado por trade.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="w-full h-56 relative">
+                    <canvas id="chartBuysSells"></canvas>
+                </div>
+            </section>
+
+            <!-- TABELA HISTÓRICA COMPLETA DE TRADES FECHADOS COM PREVISÃO E ALVO -->
+            <section class="card-glass rounded-xl p-4 border border-slate-700">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="history" class="w-4 h-4 text-amber-400"></i>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                            Histórico de Operações Fechadas — Previsão Temporal, Alvo & PnL Real
+                        </h3>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                                <th class="py-2.5 px-3">Data / Hora (UTC)</th>
+                                <th class="py-2.5 px-3">Ativo & Modalidade</th>
+                                <th class="py-2.5 px-3">Previsão Temporal (Horizonte)</th>
+                                <th class="py-2.5 px-3">Preço Entrada → Saída</th>
+                                <th class="py-2.5 px-3">Duração</th>
+                                <th class="py-2.5 px-3">Motivo da Saída</th>
+                                <th class="py-2.5 px-3 text-right">PnL Realizado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableClosedTradesHistory" class="divide-y divide-slate-800/60 mono">
+                            <tr>
+                                <td colspan="7" class="py-6 text-center text-slate-500">Carregando histórico detalhado...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
     </main>
 
     <!-- MODAL DE CREDENCIAIS BINANCE -->
@@ -710,37 +885,58 @@
         let formInitialized = false;
         let scalpFormInitialized = false;
         let currentViewMode = 'champions'; // 'champions' | 'top_all'
-        let currentTerminalTab = 'scalp'; // 'scalp' | 'sniper' | 'both'
+        let currentTerminalTab = 'scalp'; // 'scalp' | 'sniper' | 'rocket' | 'charts' | 'both'
+        let chartEquityInstance = null;
+        let chartBuysSellsInstance = null;
 
         function switchTerminalTab(tab) {
             currentTerminalTab = tab;
             const wScalp = document.getElementById('workspaceScalp');
             const wSniper = document.getElementById('workspaceSniper');
+            const wRocket = document.getElementById('workspaceRocket');
+            const wCharts = document.getElementById('workspaceCharts');
             const bScalp = document.getElementById('tabBtnScalp');
             const bSniper = document.getElementById('tabBtnSniper');
+            const bRocket = document.getElementById('tabBtnRocket');
+            const bCharts = document.getElementById('tabBtnCharts');
             const bBoth = document.getElementById('tabBtnBoth');
 
-            const activeClass = 'px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg';
-            const inactiveClass = 'px-4 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+            const activeAmber = 'px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-amber-500 text-black shadow-lg';
+            const activeSky = 'px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-sky-500 text-black shadow-lg';
+            const activePurple = 'px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-purple-600 text-white shadow-lg';
+            const activeEmerald = 'px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-emerald-600 text-white shadow-lg';
+            const inactiveClass = 'px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+
+            // Reset visibilidade
+            wScalp.classList.add('hidden');
+            wSniper.classList.add('hidden');
+            if (wRocket) wRocket.classList.add('hidden');
+            if (wCharts) wCharts.classList.add('hidden');
+
+            bScalp.className = inactiveClass;
+            bSniper.className = inactiveClass;
+            if (bRocket) bRocket.className = inactiveClass;
+            if (bCharts) bCharts.className = inactiveClass;
+            if (bBoth) bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
 
             if (tab === 'scalp') {
                 wScalp.classList.remove('hidden');
-                wSniper.classList.add('hidden');
-                bScalp.className = activeClass;
-                bSniper.className = inactiveClass;
-                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
+                bScalp.className = activeAmber;
             } else if (tab === 'sniper') {
-                wScalp.classList.add('hidden');
                 wSniper.classList.remove('hidden');
-                bScalp.className = inactiveClass;
-                bSniper.className = activeClass;
-                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
+                bSniper.className = activeSky;
+            } else if (tab === 'rocket') {
+                if (wRocket) wRocket.classList.remove('hidden');
+                if (bRocket) bRocket.className = activePurple;
+            } else if (tab === 'charts') {
+                if (wCharts) wCharts.classList.remove('hidden');
+                if (bCharts) bCharts.className = activeEmerald;
+                setTimeout(() => updateChartsView(currentStatus), 50);
             } else {
                 wScalp.classList.remove('hidden');
                 wSniper.classList.remove('hidden');
-                bScalp.className = inactiveClass;
-                bSniper.className = inactiveClass;
-                bBoth.className = 'px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-amber-500 text-black shadow-lg';
+                if (wRocket) wRocket.classList.remove('hidden');
+                if (bBoth) bBoth.className = 'px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-amber-500 text-black shadow-lg';
             }
         }
 
@@ -1100,6 +1296,12 @@
                         const tpPct = Number(p.tp_pct || ((entryP > 0 && tpP > 0) ? ((tpP - entryP) / entryP * 100) : 0.50));
                         const slPct = Number(p.sl_pct || ((entryP > 0 && stopP > 0) ? ((entryP - stopP) / entryP * 100) : 0.35));
 
+                        const horizonBadge = p.horizon_badge || (p.mode === 'ROCKET_MEME' ? '🚀 MEME' : (p.mode === 'SNIPER_CANDLE' ? '🎯 SWING' : '⚡ SCALP'));
+                        const horizonText = p.horizon || (p.mode === 'ROCKET_MEME' ? 'Minutos a Horas (~15m a 6h)' : (p.mode === 'SNIPER_CANDLE' ? 'Swing Trade (~4h a 48h)' : 'Minutos (~1 a 12m)'));
+                        const targetUsdText = p.target_usd ? `(+$${Number(p.target_usd).toFixed(2)})` : `(+$${((tpP - entryP) * Number(p.contracts || 0)).toFixed(2)})`;
+                        const riskUsdText = p.risk_usd ? `(-$${Number(p.risk_usd).toFixed(2)})` : `(-$${((entryP - stopP) * Number(p.contracts || 0)).toFixed(2)})`;
+                        const rrRatio = p.rr_ratio_label || `1:${(tpPct / (slPct || 0.35)).toFixed(1)}`;
+
                         let progress = 0;
                         if (tpP > entryP && markP > entryP) {
                             progress = Math.min(100, Math.max(5, ((markP - entryP) / (tpP - entryP)) * 100));
@@ -1110,18 +1312,23 @@
                         return `
                             <tr class="hover:bg-slate-800/40">
                                 <td class="py-2.5 px-2">
-                                    <div class="font-extrabold text-white">${p.symbol}</div>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="font-extrabold text-white text-sm">${p.symbol}</span>
+                                        <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${p.mode === 'ROCKET_MEME' ? 'bg-purple-900/80 text-purple-300 border border-purple-700' : (p.mode === 'SNIPER_CANDLE' ? 'bg-sky-900/80 text-sky-300 border border-sky-700' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40')}">${horizonBadge}</span>
+                                    </div>
                                     <div class="text-[10px] text-amber-300">$${Number(p.notional_usd || 0).toFixed(2)} USDT • ${ageMin.toFixed(1)}m aberto</div>
+                                    <div class="text-[9px] text-slate-300 font-semibold mt-0.5">⏱️ Previsão: <strong>${horizonText}</strong></div>
                                 </td>
                                 <td class="py-2.5 px-2 text-slate-300 font-bold">$${entryP}</td>
                                 <td class="py-2.5 px-2 font-extrabold ${markP >= entryP ? 'text-emerald-400' : 'text-rose-400'}">$${markP}</td>
                                 <td class="py-2.5 px-2">
                                     <div class="text-rose-400 font-bold">$${stopP}</div>
-                                    <div class="text-[10px] text-slate-400">-${slPct.toFixed(2)}%</div>
+                                    <div class="text-[10px] text-rose-300">-${slPct.toFixed(2)}% <span class="text-slate-400">${riskUsdText}</span></div>
                                 </td>
                                 <td class="py-2.5 px-2">
                                     <div class="text-emerald-300 font-extrabold">$${tpP}</div>
-                                    <div class="text-[10px] text-emerald-400">+${tpPct.toFixed(2)}% (Venda Auto)</div>
+                                    <div class="text-[10px] text-emerald-400 font-bold">+${tpPct.toFixed(2)}% <span class="text-emerald-300">${targetUsdText}</span></div>
+                                    <div class="text-[9px] text-slate-400 font-mono">R:R ${rrRatio}</div>
                                 </td>
                                 <td class="py-2.5 px-2">
                                     <div class="text-[11px] font-sans font-bold text-slate-200">${momStatus}</div>
@@ -1159,13 +1366,22 @@
             } else {
                 tbodyPos.innerHTML = openPos.map(p => {
                     const pnl = Number(p.unrealized_pnl || 0);
+                    const horizonBadge = p.horizon_badge || '🎯 SWING (HORAS)';
+                    const horizonText = p.horizon || 'Swing Trade (~4h a 48h)';
                     return `
                         <tr class="hover:bg-slate-800/40">
-                            <td class="py-2 px-2 font-bold text-white">${p.symbol}</td>
+                            <td class="py-2 px-2 font-bold text-white">
+                                <div class="flex items-center gap-1.5">
+                                    <span>${p.symbol}</span>
+                                    <span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-800">${horizonBadge}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400 mt-0.5">⏱️ Previsão: <strong>${horizonText}</strong></div>
+                            </td>
                             <td class="py-2 px-2 text-slate-200">$${Number(p.notional_usd || 0).toFixed(2)}</td>
                             <td class="py-2 px-2 text-slate-300">$${p.entry_price} → <strong class="text-white">$${p.mark_price}</strong></td>
                             <td class="py-2 px-2 text-[11px]">
-                                <span class="text-rose-400">SL: $${p.stop_price}</span> / <span class="text-emerald-400 font-bold">TP: $${p.take_profit_price}</span>
+                                <div><span class="text-rose-400">SL: $${p.stop_price}</span> / <span class="text-emerald-400 font-bold">TP: $${p.take_profit_price}</span></div>
+                                <div class="text-[10px] text-emerald-400 font-semibold">${p.target_desc || 'Alvo na Vela'} • R:R ${p.rr_ratio_label || '1:2.0'}</div>
                             </td>
                             <td class="py-2 px-2 text-right font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td>
                             <td class="py-2 px-2 text-right">
@@ -1287,6 +1503,272 @@
                         </div>
                     `;
                 }).join('');
+            }
+
+            // Atualiza Gráficos & Linha do Saldo
+            updateChartsView(data);
+        }
+
+        function updateChartsView(status) {
+            if (!status) status = currentStatus;
+            if (!status) return;
+
+            const eqHist = status.equity_history || [];
+            const closedTrades = status.closed_trades || [];
+            const tradesHistory = status.trades_history || [];
+            const totalUsdt = status.wallet_balance ? Number(status.wallet_balance.total_usdt || 0) : 18.50;
+
+            // 1. Atualiza KPI cards da aba de Gráficos
+            const cardTotBal = document.getElementById('chartCardTotalBalance');
+            if (cardTotBal) cardTotBal.innerText = `$${totalUsdt.toFixed(2)}`;
+
+            let totalRealized = 0;
+            let totalWins = 0;
+            let scalpRealized = 0;
+            let sniperRealized = 0;
+
+            closedTrades.forEach(t => {
+                const pnl = Number(t.realized_pnl || 0);
+                totalRealized += pnl;
+                if (pnl >= 0) totalWins++;
+                if (t.mode && t.mode.includes('SCALP')) scalpRealized += pnl;
+                else sniperRealized += pnl;
+            });
+
+            const winRate = closedTrades.length > 0 ? ((totalWins / closedTrades.length) * 100).toFixed(0) : 100;
+
+            const cardTotPnl = document.getElementById('chartCardTotalRealizedPnl');
+            if (cardTotPnl) {
+                cardTotPnl.innerText = `${totalRealized >= 0 ? '+' : ''}$${totalRealized.toFixed(2)}`;
+                cardTotPnl.className = `mt-2 text-2xl font-black ${totalRealized >= 0 ? 'text-emerald-400' : 'text-rose-400'} mono`;
+            }
+            const cardWinRate = document.getElementById('chartCardWinRate');
+            if (cardWinRate) cardWinRate.innerText = `Taxa de Acerto: ${winRate}% (${totalWins}/${closedTrades.length} Green)`;
+
+            const cardScalpPnl = document.getElementById('chartCardScalpPnl');
+            if (cardScalpPnl) {
+                cardScalpPnl.innerText = `${scalpRealized >= 0 ? '+' : ''}$${scalpRealized.toFixed(2)}`;
+                cardScalpPnl.className = `mt-2 text-2xl font-black ${scalpRealized >= 0 ? 'text-amber-400' : 'text-rose-400'} mono`;
+            }
+            const cardSniperPnl = document.getElementById('chartCardSniperPnl');
+            if (cardSniperPnl) {
+                cardSniperPnl.innerText = `${sniperRealized >= 0 ? '+' : ''}$${sniperRealized.toFixed(2)}`;
+                cardSniperPnl.className = `mt-2 text-2xl font-black ${sniperRealized >= 0 ? 'text-sky-400' : 'text-rose-400'} mono`;
+            }
+
+            // 2. Gráfico de Curva de Saldo Separada por Modalidade
+            const ctxEquity = document.getElementById('chartEquityCurves');
+            if (ctxEquity && typeof Chart !== 'undefined') {
+                const labels = eqHist.map(h => h.time_label || (h.timestamp_utc ? h.timestamp_utc.slice(11, 16) : '00:00'));
+                const totalData = eqHist.map(h => Number(h.total_usdt || totalUsdt));
+                const scalpData = eqHist.map(h => Number(h.scalp_pnl || 0));
+                const sniperData = eqHist.map(h => Number(h.sniper_pnl || 0));
+                const rocketData = eqHist.map(h => Number(h.rocket_pnl || 0));
+
+                if (chartEquityInstance) {
+                    chartEquityInstance.data.labels = labels;
+                    chartEquityInstance.data.datasets[0].data = totalData;
+                    chartEquityInstance.data.datasets[1].data = scalpData;
+                    chartEquityInstance.data.datasets[2].data = sniperData;
+                    chartEquityInstance.data.datasets[3].data = rocketData;
+                    chartEquityInstance.update('none');
+                } else {
+                    chartEquityInstance = new Chart(ctxEquity, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: 'Saldo Total Real ($ USDT)',
+                                    data: totalData,
+                                    borderColor: '#10b981',
+                                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                                    borderWidth: 3,
+                                    pointRadius: 4,
+                                    pointHoverRadius: 6,
+                                    pointBackgroundColor: '#10b981',
+                                    tension: 0.25,
+                                    fill: true,
+                                },
+                                {
+                                    label: '⚡ PnL Acumulado Scalp ($)',
+                                    data: scalpData,
+                                    borderColor: '#f59e0b',
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#f59e0b',
+                                    tension: 0.25,
+                                },
+                                {
+                                    label: '🎯 PnL Acumulado Trades / Sniper ($)',
+                                    data: sniperData,
+                                    borderColor: '#38bdf8',
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#38bdf8',
+                                    tension: 0.25,
+                                },
+                                {
+                                    label: '🚀 PnL Acumulado Rocket Memes ($)',
+                                    data: rocketData,
+                                    borderColor: '#c084fc',
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#c084fc',
+                                    tension: 0.25,
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    labels: { color: '#cbd5e1', font: { size: 11 } }
+                                },
+                                tooltip: {
+                                    backgroundColor: '#0f172a',
+                                    borderColor: '#334155',
+                                    borderWidth: 1,
+                                    titleColor: '#f8fafc',
+                                    bodyColor: '#cbd5e1',
+                                    callbacks: {
+                                        footer: function(items) {
+                                            const idx = items[0].dataIndex;
+                                            return eqHist[idx] && eqHist[idx].last_event ? 'Evento: ' + eqHist[idx].last_event : '';
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                    ticks: { color: '#94a3b8', font: { size: 10 } }
+                                },
+                                y: {
+                                    grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                    ticks: { color: '#94a3b8', font: { size: 10 } }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            // 3. Gráfico de Marcadores Visuais de Compras e Vendas
+            const ctxBuysSells = document.getElementById('chartBuysSells');
+            if (ctxBuysSells && typeof Chart !== 'undefined') {
+                const tradeLabels = closedTrades.map(t => `${t.symbol} (${t.time_label || (t.timestamp_utc ? t.timestamp_utc.slice(11, 16) : '--')})`);
+                const pnlPcts = closedTrades.map(t => Number(t.pnl_pct || 0));
+                const colors = pnlPcts.map(p => p >= 0 ? '#10b981' : '#f43f5e');
+
+                if (chartBuysSellsInstance) {
+                    chartBuysSellsInstance.data.labels = tradeLabels;
+                    chartBuysSellsInstance.data.datasets[0].data = pnlPcts;
+                    chartBuysSellsInstance.data.datasets[0].backgroundColor = colors;
+                    chartBuysSellsInstance.update('none');
+                } else {
+                    chartBuysSellsInstance = new Chart(ctxBuysSells, {
+                        type: 'bar',
+                        data: {
+                            labels: tradeLabels,
+                            datasets: [{
+                                label: 'Resultado do Trade (%)',
+                                data: pnlPcts,
+                                backgroundColor: colors,
+                                borderRadius: 4,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    backgroundColor: '#0f172a',
+                                    borderColor: '#334155',
+                                    borderWidth: 1,
+                                    titleColor: '#f8fafc',
+                                    bodyColor: '#cbd5e1',
+                                    callbacks: {
+                                        afterBody: function(items) {
+                                            const idx = items[0].dataIndex;
+                                            const t = closedTrades[idx];
+                                            if (!t) return [];
+                                            return [
+                                                `Entrada: $${t.entry_price} → Saída: $${t.exit_price}`,
+                                                `Lucro: ${t.realized_pnl >= 0 ? '+' : ''}$${t.realized_pnl} USDT`,
+                                                `Previsão: ${t.horizon || 'Minutos'}`,
+                                                `Duração: ${t.duration_minutes} min`,
+                                                `Motivo: ${t.reason || 'Concluído'}`
+                                            ];
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { display: false },
+                                    ticks: { color: '#94a3b8', font: { size: 10 } }
+                                },
+                                y: {
+                                    grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                    ticks: {
+                                        color: '#94a3b8',
+                                        font: { size: 10 },
+                                        callback: v => v + '%'
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            // 4. Tabela Histórica Detalhada com Previsão e Alvo
+            const tbodyClosed = document.getElementById('tableClosedTradesHistory');
+            if (tbodyClosed) {
+                if (closedTrades.length === 0) {
+                    tbodyClosed.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-500">Nenhum trade fechado ainda. Os registros aparecerão aqui assim que as saídas forem executadas.</td></tr>`;
+                } else {
+                    tbodyClosed.innerHTML = closedTrades.slice().reverse().map(t => {
+                        const pnl = Number(t.realized_pnl || 0);
+                        const pnlPct = Number(t.pnl_pct || 0);
+                        const dur = Number(t.duration_minutes || 0);
+                        const modeBadge = t.mode && t.mode.includes('ROCKET') 
+                            ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-900 text-purple-300 border border-purple-700">🚀 ROCKET MEME</span>`
+                            : (t.mode && t.mode.includes('SNIPER') 
+                                ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-800">🎯 SNIPER [${t.timeframe || '1h'}]</span>`
+                                : `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-800">⚡ SCALP L2</span>`);
+
+                        return `
+                            <tr class="hover:bg-slate-800/40">
+                                <td class="py-2.5 px-3 text-slate-400">${t.timestamp_utc || '--'}</td>
+                                <td class="py-2.5 px-3">
+                                    <div class="font-extrabold text-white text-xs">${t.symbol}</div>
+                                    <div class="mt-0.5">${modeBadge}</div>
+                                </td>
+                                <td class="py-2.5 px-3">
+                                    <div class="font-bold text-slate-200">${t.horizon || 'Minutos (~1 a 12m)'}</div>
+                                    <div class="text-[10px] text-slate-400">Previsão Operacional</div>
+                                </td>
+                                <td class="py-2.5 px-3 text-slate-300 font-bold">
+                                    $${t.entry_price} → <strong class="${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">$${t.exit_price}</strong>
+                                </td>
+                                <td class="py-2.5 px-3 text-slate-400 font-semibold">${dur.toFixed(1)} min</td>
+                                <td class="py-2.5 px-3 text-[11px] text-slate-300">
+                                    <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700">${t.reason || 'Auto Saída'}</span>
+                                </td>
+                                <td class="py-2.5 px-3 text-right font-extrabold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
             }
         }
 

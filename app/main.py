@@ -91,10 +91,13 @@ class SniperRuntimeState:
 
     def __init__(self) -> None:
         self.enabled: bool = os.getenv("BOT_ENABLED", "true").lower() in ("true", "1", "yes")
-        # Vagas dedicadas e isoladas para cada modalidade (evita que o Scalp tome a vaga do Sniper ou vice-versa)
+        # Vagas dedicadas e isoladas para cada modalidade (Scalp Book L2, Sniper Swing e Rocket Memes)
         self.max_scalp_positions: int = int(os.getenv("MAX_SCALP_POSITIONS", "1"))
         self.max_sniper_positions: int = int(os.getenv("MAX_SNIPER_POSITIONS", "1"))
-        self.max_concurrent_positions: int = self.max_scalp_positions + self.max_sniper_positions
+        self.max_rocket_positions: int = int(os.getenv("MAX_ROCKET_POSITIONS", "1"))
+        self.max_concurrent_positions: int = (
+            self.max_scalp_positions + self.max_sniper_positions + self.max_rocket_positions
+        )
         self.top_symbols_limit: int = int(os.getenv("TOP_SYMBOLS_LIMIT", "35"))
         self.min_volume_24h_usd: float = float(os.getenv("MIN_VOLUME_24H_USD", "50000000"))
         self.min_profit_factor: float = float(os.getenv("MIN_PROFIT_FACTOR", "1.35"))
@@ -110,6 +113,12 @@ class SniperRuntimeState:
         self.orderbook_scalp_auto: bool = False
         self.orderbook_cache: List[Dict[str, Any]] = []
         self.orderbook_last_ts: float = 0.0
+
+        # Configuração do Motor Rocket Memes (Alta Volatilidade / Alvos 10-15%+ com Trailing Stop)
+        self.rocket_margin_usdt: float = float(os.getenv("ROCKET_MARGIN_USDT", "5.25"))
+        self.rocket_tp_target_pct: float = float(os.getenv("ROCKET_TP_TARGET_PCT", "15.0"))
+        self.rocket_sl_pct: float = float(os.getenv("ROCKET_SL_PCT", "2.5"))
+        self.rocket_auto_enabled: bool = True
 
         self.wallet_balance: Dict[str, Any] = {
             "total_usdt": 0.0,
@@ -404,6 +413,9 @@ async def run_candle_close_sniper() -> None:
                 entry_price=sig["entry_price"],
                 stop_price=sig["stop_price"],
                 take_profit_price=sig["take_profit_price"],
+                mode="SNIPER_CANDLE",
+                timeframe=tf,
+                strategy_name=sig["strategy_name"],
             )
             trade_record = {
                 "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -506,6 +518,15 @@ async def lifespan(app: FastAPI):
         coalesce=True,
     )
 
+    scheduler.add_job(
+        check_rocket_meme_breakouts,
+        trigger=IntervalTrigger(seconds=20),
+        id="rocket_meme_scanner",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     scheduler.start()
     state.append_log(
         "SYSTEM_STARTUP",
@@ -593,8 +614,16 @@ async def get_status() -> Dict[str, Any]:
         "max_concurrent_positions": state.max_concurrent_positions,
         "max_scalp_positions": state.max_scalp_positions,
         "max_sniper_positions": state.max_sniper_positions,
+        "max_rocket_positions": state.max_rocket_positions,
         "scalp_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]),
         "sniper_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]),
+        "rocket_positions_count": len([p for p in state.open_positions if p.get("mode") in ("ROCKET_MEME", "ROCKET")]),
+        "rocket_margin_usdt": state.rocket_margin_usdt,
+        "rocket_tp_target_pct": state.rocket_tp_target_pct,
+        "rocket_sl_pct": state.rocket_sl_pct,
+        "rocket_auto_enabled": state.rocket_auto_enabled,
+        "closed_trades": executor.closed_trades,
+        "equity_history": executor.equity_history,
         "wallet_balance": state.wallet_balance,
         "open_positions_count": len(state.open_positions),
         "open_positions": state.open_positions,
@@ -969,6 +998,9 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
         take_profit_price=req.take_profit_price,
         margin_usdt=state.scalp_margin_usdt,
         mode="SCALP_BOOK",
+        timeframe="BOOK-L2",
+        strategy_name=f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%)",
+        horizon="Minutos (~1 a 12m)",
     )
     trade_record = {
         "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -1083,3 +1115,108 @@ async def check_auto_scalp_and_rotation() -> None:
                     )
                 except Exception as rot_err:
                     logger.warning(f"Erro ao processar rotação de capital: {rot_err}")
+
+
+MEME_SYMBOLS: List[str] = [
+    "PEPE/USDT",
+    "DOGE/USDT",
+    "SHIB/USDT",
+    "WIF/USDT",
+    "BONK/USDT",
+    "FLOKI/USDT",
+    "NEIRO/USDT",
+]
+
+
+async def check_rocket_meme_breakouts() -> None:
+    """
+    Radar de Ignição em Tempo Real para Memecoins / Alta Volatilidade (10-15%+ com Trailing Stop).
+    Executa a cada 20 segundos se houver vaga livre de Rocket Memes.
+    """
+    if not (state.enabled and state.rocket_auto_enabled):
+        return
+    if executor.market_type != "spot":
+        return
+
+    rocket_positions = [p for p in state.open_positions if p.get("mode") in ("ROCKET_MEME", "ROCKET")]
+    if len(rocket_positions) >= state.max_rocket_positions:
+        return
+
+    free_usdt = float(state.wallet_balance.get("free_usdt") or 0.0)
+    if free_usdt < 5.20:
+        return
+
+    open_symbols = {p.get("symbol") for p in state.open_positions}
+
+    for sym in MEME_SYMBOLS:
+        if sym in open_symbols:
+            continue
+
+        raw_id = sym.replace("/", "")
+        try:
+            assert executor.http_client is not None
+            resp = await executor.http_client.get(
+                f"{VISION_BASE_URL}/klines",
+                params={"symbol": raw_id, "interval": "15m", "limit": 25},
+            )
+            if resp.status_code != 200:
+                continue
+            klines = resp.json()
+            if len(klines) < 22:
+                continue
+
+            last_c = klines[-1]
+            prev_klines = klines[:-1]
+            close_p = float(last_c[4])
+            open_p = float(last_c[1])
+            high_p = float(last_c[2])
+            vol_cur = float(last_c[5])
+
+            avg_vol = sum(float(k[5]) for k in prev_klines[-20:]) / 20.0
+            vol_ratio = (vol_cur / avg_vol) if avg_vol > 0 else 1.0
+            donchian_high = max(float(k[2]) for k in prev_klines[-20:])
+
+            # Condição de Ignição Rocket: Volume 15m >= 1.6x E fechamento próximo da máxima
+            is_igniting = (
+                (vol_ratio >= 1.6 and close_p > open_p and close_p >= (high_p * 0.992))
+                or (close_p >= donchian_high and vol_ratio >= 1.30 and close_p > open_p)
+            )
+            if not is_igniting:
+                continue
+
+            mom = await executor._check_position_momentum(raw_id, close_p)
+            if mom["buy_pressure_pct"] < 50.0:
+                continue
+
+            entry_p = close_p
+            stop_p = round(entry_p * (1.0 - (state.rocket_sl_pct / 100.0)), 6)
+            tp_p = round(entry_p * (1.0 + (state.rocket_tp_target_pct / 100.0)), 6)
+
+            order_receipt = await executor.execute_atomic_order(
+                symbol=sym,
+                direction="LONG",
+                entry_price=entry_p,
+                stop_price=stop_p,
+                take_profit_price=tp_p,
+                margin_usdt=state.rocket_margin_usdt,
+                mode="ROCKET_MEME",
+                timeframe="15m",
+                strategy_name="Rocket Meme Breakout + Trailing",
+                horizon="Minutos a Horas (~15m a 6h)",
+            )
+
+            state.append_log(
+                "ROCKET_MEME_FIRED",
+                (
+                    f"🚀 ROCKET MEME DISPARADO: {sym} [15m] LONG "
+                    f"(${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | "
+                    f"Alvo: +{state.rocket_tp_target_pct:.1f}% (${order_receipt['take_profit_price']}) • "
+                    f"SL: -{state.rocket_sl_pct:.1f}% • Trailing Escadinha Ativo • Vol: {vol_ratio:.1f}x"
+                ),
+                {"order_receipt": order_receipt, "vol_ratio": vol_ratio},
+            )
+            state.open_positions = await executor.get_open_positions()
+            state.wallet_balance = await executor.get_wallet_balance()
+            break
+        except Exception as exc:
+            logger.debug(f"Erro ao avaliar ignição Rocket {sym}: {exc}")
