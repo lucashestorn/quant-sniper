@@ -124,6 +124,10 @@ class BinanceFuturesExecutor:
         self.auto_momentum_exit: bool = True
         self.max_hold_minutes: int = 12
         self.last_closed_events: List[Dict[str, Any]] = []
+        # Rotação Ativa de Capital por Oportunidade Promissora (Opportunity Cost Switch)
+        self.scalp_rotation_enabled: bool = os.getenv("SCALP_ROTATION_ENABLED", "true").lower() in ("true", "1", "yes")
+        self.scalp_rotation_min_pnl: float = float(os.getenv("SCALP_ROTATION_MIN_PNL", "0.22"))
+        self.scalp_rotation_min_score: float = float(os.getenv("SCALP_ROTATION_MIN_SCORE", "78.0"))
 
     def _load_brackets(self) -> Dict[str, Dict[str, Any]]:
         try:
@@ -270,11 +274,11 @@ class BinanceFuturesExecutor:
 
         await self._sync_server_time()
 
-        # Ordem de tentativa de servidores: primeiro o escolhido pelo usuário, depois fallback automático
+        # Ordem de tentativa de servidores: sem misturar Live com Testnet
         if self.testnet:
-            candidate_bases = [(True, TESTNET_SPOT_BASE_URL), (False, LIVE_SPOT_BASE_URLS[0])]
+            candidate_bases = [(True, TESTNET_SPOT_BASE_URL)]
         else:
-            candidate_bases = [(False, LIVE_SPOT_BASE_URLS[0]), (False, LIVE_SPOT_BASE_URLS[1]), (True, TESTNET_SPOT_BASE_URL)]
+            candidate_bases = [(False, LIVE_SPOT_BASE_URLS[0]), (False, LIVE_SPOT_BASE_URLS[1])]
 
         last_err = ""
         for is_test, base_url in candidate_bases:
@@ -545,7 +549,7 @@ class BinanceFuturesExecutor:
             ]
 
     async def _update_and_get_shadow_positions(self) -> List[Dict[str, Any]]:
-        """Atualiza marcação a mercado e verifica TP/SL automático das posições Shadow Spot."""
+        """Atualiza marcação a mercado e verifica TP/SL e saídas inteligentes das posições Shadow Spot."""
         if not self.shadow_positions:
             return []
         assert self.http_client is not None
@@ -554,6 +558,7 @@ class BinanceFuturesExecutor:
 
         closed_syms: List[str] = []
         active_list: List[Dict[str, Any]] = []
+        now_sec = time.time()
 
         for sym, pos in list(self.shadow_positions.items()):
             raw_pair = sym.split(":")[0].replace("/", "")
@@ -562,19 +567,66 @@ class BinanceFuturesExecutor:
             entry_p = float(pos["entry_price"])
             stop_p = float(pos.get("stop_price") or 0.0)
             tp_p = float(pos.get("take_profit_price") or 0.0)
+            prev_max = float(pos.get("max_price") or entry_p)
+            max_p = max(prev_max, mark_p)
+            pos["max_price"] = max_p
+            opened_ts = float(pos.get("opened_at_ts") or now_sec)
+            pos["opened_at_ts"] = opened_ts
 
+            pnl = (mark_p - entry_p) * qty
+            pnl_pct = ((mark_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+            max_pnl_pct = ((max_p - entry_p) / entry_p * 100.0) if entry_p > 0 else 0.0
+            age_min = max(0.0, (now_sec - opened_ts) / 60.0)
+            tp_pct = ((tp_p - entry_p) / entry_p * 100.0) if (entry_p > 0 and tp_p > 0) else 0.55
+            sl_pct = ((entry_p - stop_p) / entry_p * 100.0) if (entry_p > 0 and stop_p > 0) else 0.35
+
+            exit_reason: Optional[str] = None
             # Verifica atingimento de Stop Loss ou Take Profit
-            if (stop_p > 0 and mark_p <= stop_p) or (tp_p > 0 and mark_p >= tp_p):
+            if tp_p > 0 and mark_p >= tp_p:
+                exit_reason = "TAKE_PROFIT"
+            elif stop_p > 0 and mark_p <= stop_p:
+                exit_reason = "STOP_LOSS"
+            elif self.auto_momentum_exit:
+                mom = await self._check_position_momentum(raw_pair, mark_p)
+                live_buy = mom["buy_pressure_pct"]
+                live_tak = mom["taker_buy_pct"]
+                pos["live_buy_pressure_pct"] = live_buy
+                pos["live_taker_buy_pct"] = live_tak
+                if max_pnl_pct >= 0.25 and (
+                    (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
+                    or (live_buy < 44.0 and live_tak < 45.0 and pnl_pct >= 0.05)
+                ):
+                    exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
+                elif age_min >= 1.5 and live_buy <= 40.0 and live_tak <= 42.0:
+                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book={live_buy}% | Tape={live_tak}%)"
+                elif age_min >= float(self.max_hold_minutes) and (live_buy < 49.0 or live_tak < 47.0):
+                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f}m sem romper)"
+
+            if exit_reason is not None:
                 exit_val = qty * mark_p * (1.0 - 0.0011)
                 self.shadow_usdt_free += exit_val
                 closed_syms.append(sym)
+                receipt = {
+                    "symbol": sym,
+                    "reason": exit_reason,
+                    "sold_qty": round(qty, 6),
+                    "received_usdt": round(exit_val, 2),
+                    "entry_price": round(entry_p, 6),
+                    "exit_price": round(mark_p, 6),
+                    "realized_pnl": round(pnl, 2),
+                }
+                self.last_closed_events.append(receipt)
                 continue
 
             notional = qty * mark_p
-            pnl = (mark_p - entry_p) * qty
             pos["mark_price"] = mark_p
             pos["notional_usd"] = round(notional, 2)
             pos["unrealized_pnl"] = round(pnl, 2)
+            pos["pnl_pct"] = round(pnl_pct, 2)
+            pos["max_pnl_pct"] = round(max_pnl_pct, 2)
+            pos["tp_pct"] = round(tp_pct, 2)
+            pos["sl_pct"] = round(sl_pct, 2)
+            pos["age_minutes"] = round(age_min, 1)
             active_list.append(pos)
 
         for s in closed_syms:
@@ -614,10 +666,71 @@ class BinanceFuturesExecutor:
         floored = (d_qty // d_step) * d_step
         return format(floored.normalize(), "f")
 
+    async def _convert_dust_to_usdt(self, from_asset: str, amount: float) -> Dict[str, Any]:
+        """
+        Converte qualquer saldo remanescente (inclusive frações abaixo do minNotional de $5.00 da Binance)
+        diretamente para USDT usando o endpoint oficial Binance Convert (/sapi/v1/convert) com ZERO taxas e sem rejeição.
+        """
+        if self.http_client is None:
+            await self.initialize()
+        assert self.http_client is not None
+        await self._sync_server_time()
+
+        amt_str = f"{amount:.8f}".rstrip("0").rstrip(".")
+        params = {
+            "fromAsset": from_asset,
+            "toAsset": "USDT",
+            "fromAmount": amt_str,
+            "timestamp": self._get_synced_timestamp_ms(),
+            "recvWindow": 50000,
+        }
+        query_str = urllib.parse.urlencode(params)
+        signature = hmac.new(
+            self.api_secret.encode("utf-8"),
+            query_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        url = f"{LIVE_SPOT_BASE_URLS[0]}/sapi/v1/convert/getQuote?{query_str}&signature={signature}"
+        headers = {"X-MBX-APIKEY": self.api_key}
+
+        r = await self.http_client.post(url, headers=headers)
+        if r.status_code != 200:
+            raise RuntimeError(f"Falha na cotação Binance Convert: HTTP {r.status_code} {r.text}")
+
+        qdata = r.json()
+        quote_id = qdata.get("quoteId")
+        if not quote_id:
+            raise RuntimeError(f"QuoteId inválido no Binance Convert: {qdata}")
+
+        p2 = {
+            "quoteId": quote_id,
+            "timestamp": self._get_synced_timestamp_ms(),
+            "recvWindow": 50000,
+        }
+        q2 = urllib.parse.urlencode(p2)
+        sig2 = hmac.new(
+            self.api_secret.encode("utf-8"),
+            q2.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        url2 = f"{LIVE_SPOT_BASE_URLS[0]}/sapi/v1/convert/acceptQuote?{q2}&signature={sig2}"
+        r2 = await self.http_client.post(url2, headers=headers)
+        if r2.status_code != 200:
+            raise RuntimeError(f"Falha na liquidação Binance Convert: HTTP {r2.status_code} {r2.text}")
+
+        to_amount = float(qdata.get("toAmount") or 0.0)
+        ratio = float(qdata.get("ratio") or 0.0)
+        return {
+            "orderId": r2.json().get("orderId") or quote_id,
+            "sold_qty": float(qdata.get("fromAmount") or amount),
+            "received_usdt": to_amount,
+            "avg_exit": ratio,
+        }
+
     async def close_spot_position(self, symbol: str, reason: str = "MANUAL") -> Dict[str, Any]:
         """
-        Vende 100% da posição aberta de `symbol` a mercado para USDT (Spot ou Shadow),
-        respeitando `LOT_SIZE.stepSize` mesmo quando o valor nocional é ~$4.80-$4.95.
+        Vende 100% da posição aberta de `symbol` para USDT (Spot ou Shadow),
+        com proteção automática contra minNotional < $5.00 via Binance Convert.
         """
         if self.exchange is None:
             await self.initialize()
@@ -656,39 +769,42 @@ class BinanceFuturesExecutor:
             self.save_brackets()
             raise RuntimeError(f"Saldo livre de {coin} já está zerado.")
 
-        step_str = await self._get_step_size(raw_pair)
-        formatted_qty = self._floor_to_step(free_qty, step_str)
+        resp_p = await self.http_client.get(f"{VISION_BASE_URL}/ticker/price", params={"symbol": raw_pair})
+        cur_p = float(resp_p.json().get("price") or 0.0)
+        notional_est = free_qty * cur_p
 
-        try:
-            sell_res = await self._spot_signed_request(
-                "POST",
-                "/order",
-                {
-                    "symbol": raw_pair,
-                    "side": "SELL",
-                    "type": "MARKET",
-                    "quantity": formatted_qty,
-                },
-            )
-        except Exception:
-            # Fallback via quoteOrderQty se necessário
-            resp_p = await self.http_client.get(f"{VISION_BASE_URL}/ticker/price", params={"symbol": raw_pair})
-            cur_p = float(resp_p.json().get("price") or 0.0)
-            notional_est = free_qty * cur_p * 0.992
-            sell_res = await self._spot_signed_request(
-                "POST",
-                "/order",
-                {
-                    "symbol": raw_pair,
-                    "side": "SELL",
-                    "type": "MARKET",
-                    "quoteOrderQty": f"{notional_est:.2f}",
-                },
-            )
-
-        executed_qty = float(sell_res.get("executedQty") or formatted_qty)
-        received_usdt = float(sell_res.get("cummulativeQuoteQty") or 0.0)
-        avg_exit = (received_usdt / executed_qty) if executed_qty > 0 else 0.0
+        # Se o valor for menor que o minNotional de $5.00 da Binance, usa o Binance Convert diretamente
+        if notional_est < 5.05:
+            convert_res = await self._convert_dust_to_usdt(coin, free_qty)
+            executed_qty = convert_res["sold_qty"]
+            received_usdt = convert_res["received_usdt"]
+            avg_exit = convert_res["avg_exit"]
+            order_id = convert_res["orderId"]
+        else:
+            step_str = await self._get_step_size(raw_pair)
+            formatted_qty = self._floor_to_step(free_qty, step_str)
+            try:
+                sell_res = await self._spot_signed_request(
+                    "POST",
+                    "/order",
+                    {
+                        "symbol": raw_pair,
+                        "side": "SELL",
+                        "type": "MARKET",
+                        "quantity": formatted_qty,
+                    },
+                )
+                executed_qty = float(sell_res.get("executedQty") or formatted_qty)
+                received_usdt = float(sell_res.get("cummulativeQuoteQty") or 0.0)
+                avg_exit = (received_usdt / executed_qty) if executed_qty > 0 else cur_p
+                order_id = sell_res.get("orderId")
+            except Exception as spot_err:
+                logger.warning(f"[{sym_pair}] Ordem a mercado falhou ({spot_err}). Acionando fallback Binance Convert...")
+                convert_res = await self._convert_dust_to_usdt(coin, free_qty)
+                executed_qty = convert_res["sold_qty"]
+                received_usdt = convert_res["received_usdt"]
+                avg_exit = convert_res["avg_exit"]
+                order_id = convert_res["orderId"]
 
         bkt = self.real_spot_brackets.pop(sym_pair, {})
         self.save_brackets()
@@ -701,7 +817,7 @@ class BinanceFuturesExecutor:
         receipt = {
             "symbol": sym_pair,
             "reason": reason,
-            "order_id": sell_res.get("orderId"),
+            "order_id": order_id,
             "sold_qty": round(executed_qty, 6),
             "received_usdt": round(received_usdt, 2),
             "entry_price": round(entry_p, 6),
@@ -932,8 +1048,8 @@ class BinanceFuturesExecutor:
         if self.market_type == "spot":
             if direction.upper() != "LONG":
                 raise RuntimeError(f"[{symbol}] Modo SPOT opera exclusivamente sinais LONG.")
-            if notional_usdt < 5.0:
-                notional_usdt = 5.20
+            if notional_usdt < 5.50:
+                notional_usdt = 5.50
 
             logger.info(
                 f"[{symbol}] [SPOT {mode}] Comprando ${notional_usdt:.2f} USDT a mercado (quoteOrderQty) | "

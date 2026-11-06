@@ -279,6 +279,11 @@
                             class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-emerald-500 hover:bg-emerald-400 text-black shadow">
                             <span>🧠 Auto-Venda se Momento Passar: ATIVO</span>
                         </button>
+                        <button onclick="toggleScalpRotation()" id="btnScalpRotation"
+                            class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-blue-600 hover:bg-blue-500 text-white shadow"
+                            title="Se as vagas estiverem cheias e surgir uma moeda com score muito superior, fecha uma estagnada (somente se PnL >= +0.22% e taxas 100% cobertas) e gira o capital.">
+                            <span>🔄 Rotação Ativa (0-0 com Taxas Pagas): ATIVO</span>
+                        </button>
                         <button onclick="closeAllPositionsMarket()"
                             class="px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-rose-600 hover:bg-rose-500 text-white shadow">
                             <span>🚨 Vender Todas Agora</span>
@@ -742,6 +747,18 @@
             }
         }
 
+        async function toggleScalpRotation() {
+            const currentRot = currentStatus && currentStatus.scalp_rotation_enabled !== undefined ? Boolean(currentStatus.scalp_rotation_enabled) : true;
+            const res = await fetch('/api/scalp/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scalp_rotation_enabled: !currentRot, apply_to_open: false })
+            });
+            if (res.ok) {
+                await fetchStatus();
+            }
+        }
+
         function setViewMode(mode) {
             currentViewMode = mode;
             const bChamp = document.getElementById('btnViewChampions');
@@ -960,6 +977,18 @@
                 } else {
                     btnMom.innerHTML = `<span>🧠 Auto-Venda se Momento Passar: OFF</span>`;
                     btnMom.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+                }
+            }
+
+            const btnRot = document.getElementById('btnScalpRotation');
+            if (btnRot) {
+                const rotOn = data.scalp_rotation_enabled !== undefined ? Boolean(data.scalp_rotation_enabled) : true;
+                if (rotOn) {
+                    btnRot.innerHTML = `<span>🔄 Rotação Ativa (0-0 com Taxas Pagas): ATIVO</span>`;
+                    btnRot.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-blue-600 hover:bg-blue-500 text-white shadow';
+                } else {
+                    btnRot.innerHTML = `<span>🔄 Rotação Ativa: INATIVO</span>`;
+                    btnRot.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700';
                 }
             }
 

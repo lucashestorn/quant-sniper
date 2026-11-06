@@ -74,6 +74,8 @@ class ScalpConfigRequest(BaseModel):
     orderbook_scalp_auto: Optional[bool] = None
     auto_momentum_exit: Optional[bool] = None
     max_hold_minutes: Optional[int] = None
+    scalp_rotation_enabled: Optional[bool] = None
+    scalp_rotation_min_pnl: Optional[float] = None
     apply_to_open: Optional[bool] = True
 
 
@@ -455,6 +457,12 @@ async def run_scalp_position_guardian() -> None:
     except Exception as exc:
         logger.debug(f"Erro no guardião de posições: {exc}")
 
+    try:
+        if state.enabled and state.orderbook_scalp_auto and state.orderbook_cache:
+            await check_auto_scalp_and_rotation()
+    except Exception as rot_err:
+        logger.debug(f"Aviso no ciclo de auto-scalp/rotação do guardião: {rot_err}")
+
 
 # ============================================================================
 # CICLO DE VIDA (LIFESPAN) & ENDPOINTS FASTAPI
@@ -554,6 +562,8 @@ async def get_status() -> Dict[str, Any]:
         "scalp_margin_usdt": state.scalp_margin_usdt,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "max_hold_minutes": executor.max_hold_minutes,
+        "scalp_rotation_enabled": executor.scalp_rotation_enabled,
+        "scalp_rotation_min_pnl": executor.scalp_rotation_min_pnl,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -686,6 +696,9 @@ async def toggle_bot(
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "auto_momentum_exit": executor.auto_momentum_exit,
+        "scalp_rotation_enabled": executor.scalp_rotation_enabled,
+        "scalp_rotation_min_pnl": executor.scalp_rotation_min_pnl,
         "champions_count": len(state.champions_map),
         "champions_map": state.champions_map,
         "top_options_ranking": state.top_options_ranking,
@@ -738,33 +751,17 @@ async def get_orderbook_scalp() -> Dict[str, Any]:
         )
         state.orderbook_last_ts = now_sec
 
-        # Se Auto-Scalp do Livro de Ofertas estiver ligado, verifica gatilho extremo (Demanda >= 62% e Agressão >= 54%)
+        # Se Auto-Scalp do Livro de Ofertas estiver ligado, avalia entradas e rotação inteligente
         if state.enabled and state.orderbook_scalp_auto:
-            open_syms = {p["symbol"] for p in state.open_positions}
-            slots = max(0, state.max_concurrent_positions - len(state.open_positions))
-            if slots > 0:
-                for item in state.orderbook_cache:
-                    if (
-                        item.get("signal_ready")
-                        and item.get("buy_pressure_pct", 0) >= 62.0
-                        and item.get("taker_buy_pct", 0) >= 54.0
-                        and item["symbol"] not in open_syms
-                    ):
-                        await execute_orderbook_scalp(
-                            ScalpExecuteRequest(
-                                symbol=item["symbol"],
-                                entry_price=item["entry_price"],
-                                stop_price=item["stop_price"],
-                                take_profit_price=item["take_profit_price"],
-                            )
-                        )
-                        break
+            await check_auto_scalp_and_rotation()
 
     return {
         "status": "ok",
         "auto_enabled": state.orderbook_scalp_auto,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "max_hold_minutes": executor.max_hold_minutes,
+        "scalp_rotation_enabled": executor.scalp_rotation_enabled,
+        "scalp_rotation_min_pnl": executor.scalp_rotation_min_pnl,
         "scalp_tp_pct": state.scalp_tp_pct,
         "scalp_sl_pct": state.scalp_sl_pct,
         "scalp_target_mode": state.scalp_target_mode,
@@ -803,6 +800,12 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
     if req.max_hold_minutes is not None:
         executor.max_hold_minutes = max(3, min(120, int(req.max_hold_minutes)))
         changes.append(f"TempoMáx={executor.max_hold_minutes}m")
+    if req.scalp_rotation_enabled is not None:
+        executor.scalp_rotation_enabled = bool(req.scalp_rotation_enabled)
+        changes.append(f"Rotação={'ON' if executor.scalp_rotation_enabled else 'OFF'}")
+    if req.scalp_rotation_min_pnl is not None:
+        executor.scalp_rotation_min_pnl = max(0.15, min(2.0, float(req.scalp_rotation_min_pnl)))
+        changes.append(f"MinPnLRot=+{executor.scalp_rotation_min_pnl:.2f}%")
 
     updated_open: List[str] = []
     if req.apply_to_open:
@@ -831,6 +834,8 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "max_hold_minutes": executor.max_hold_minutes,
+        "scalp_rotation_enabled": executor.scalp_rotation_enabled,
+        "scalp_rotation_min_pnl": executor.scalp_rotation_min_pnl,
         "open_positions": state.open_positions,
     }
 
@@ -918,3 +923,92 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
     state.open_positions = await executor.get_open_positions()
     state.wallet_balance = await executor.get_wallet_balance()
     return {"status": "ok", "order_receipt": order_receipt}
+
+
+async def check_auto_scalp_and_rotation() -> None:
+    """
+    Avalia a execução automática do Scalp e a Rotação Ativa de Capital:
+    1. Se houver vagas livres (slots > 0): dispara na melhor oportunidade qualificada.
+    2. Se as vagas estiverem cheias (slots == 0) e a Rotação Ativa estiver ON:
+       - Detecta se há uma candidata explosiva no radar (Score >= 78, Demanda >= 60%, Taker >= 53%).
+       - Avalia as posições abertas: só permite rotacionar uma posição se ela já tiver coberto
+         todas as taxas da corretora (PnL >= +0.22%), tiver mais de 2 minutos de vida e momento estagnado.
+       - Fecha a posição estagnada no verde e gira imediatamente o capital para a nova oportunidade!
+    """
+    if not (state.enabled and state.orderbook_scalp_auto and state.orderbook_cache):
+        return
+
+    open_positions = state.open_positions
+    open_syms = {p["symbol"] for p in open_positions}
+    slots = max(0, state.max_concurrent_positions - len(open_positions))
+
+    if slots > 0:
+        for item in state.orderbook_cache:
+            if (
+                item.get("signal_ready")
+                and item.get("buy_pressure_pct", 0) >= 62.0
+                and item.get("taker_buy_pct", 0) >= 54.0
+                and item["symbol"] not in open_syms
+            ):
+                await execute_orderbook_scalp(
+                    ScalpExecuteRequest(
+                        symbol=item["symbol"],
+                        entry_price=item["entry_price"],
+                        stop_price=item["stop_price"],
+                        take_profit_price=item["take_profit_price"],
+                    )
+                )
+                break
+    elif executor.scalp_rotation_enabled and len(open_positions) >= state.max_concurrent_positions:
+        candidate = None
+        for item in state.orderbook_cache:
+            if (
+                item.get("signal_ready")
+                and item.get("scalp_score", 0) >= executor.scalp_rotation_min_score
+                and item.get("buy_pressure_pct", 0) >= 60.0
+                and item.get("taker_buy_pct", 0) >= 53.0
+                and item["symbol"] not in open_syms
+            ):
+                candidate = item
+                break
+
+        if candidate:
+            rotatable = []
+            for p in open_positions:
+                p_pnl = float(p.get("pnl_pct") or 0.0)
+                p_age = float(p.get("age_minutes") or 0.0)
+                p_mom = float(p.get("live_buy_pressure_pct") or 50.0)
+                p_tak = float(p.get("live_taker_buy_pct") or 50.0)
+
+                # Critério de proteção: PnL >= min_pnl (+0.22% cobre round-trip fee + spread), idade >= 2.0 min, e momento mais fraco
+                if p_pnl >= executor.scalp_rotation_min_pnl and p_age >= 2.0:
+                    delta_score = candidate["scalp_score"] - ((p_mom * 0.58) + (p_tak * 0.42))
+                    if delta_score >= 12.0 or p_mom <= 48.0 or p_tak <= 48.0:
+                        rotatable.append((delta_score, p_age, p))
+
+            if rotatable:
+                rotatable.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                victim = rotatable[0][2]
+                v_sym = victim["symbol"]
+                v_pnl = float(victim.get("pnl_pct") or 0.0)
+
+                reason = f"ROTACAO_OPORTUNIDADE (Saindo de {v_sym} em +{v_pnl:.2f}% [Taxas Cobertas] -> Gira para {candidate['symbol']} Score {candidate['scalp_score']})"
+                logger.info(f"🔄 Executando rotação de capital: {reason}")
+                try:
+                    await executor.close_spot_position(v_sym, reason=reason)
+                    await asyncio.sleep(0.4)
+                    await execute_orderbook_scalp(
+                        ScalpExecuteRequest(
+                            symbol=candidate["symbol"],
+                            entry_price=candidate["entry_price"],
+                            stop_price=candidate["stop_price"],
+                            take_profit_price=candidate["take_profit_price"],
+                        )
+                    )
+                    state.append_log(
+                        "CAPITAL_ROTATION",
+                        f"🔄 ROTAÇÃO ATIVA: Fechado {v_sym} (+{v_pnl:.2f}%) e capital girado imediatamente para {candidate['symbol']} (Score {candidate['scalp_score']}).",
+                        {"closed_symbol": v_sym, "target_symbol": candidate["symbol"], "candidate_score": candidate["scalp_score"]},
+                    )
+                except Exception as rot_err:
+                    logger.warning(f"Erro ao processar rotação de capital: {rot_err}")
