@@ -1074,6 +1074,12 @@ class BinanceFuturesExecutor:
                                 # Swing Trade: protege breakeven se passar de +3.0%
                                 if max_pnl_pct >= 3.0 and pnl_pct <= 0.20:
                                     exit_reason = f"SNIPER_BREAKEVEN (Pico +{max_pnl_pct:.2f}% -> Breakeven +{pnl_pct:.2f}%)"
+                            elif "SESSION" in pos_mode:
+                                # Operações de Sessão Especial (Virada da China ou Almoço nos EUA)
+                                if max_pnl_pct >= 0.90 and pnl_pct <= 0.15:
+                                    exit_reason = f"SESSION_BREAKEVEN (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
+                                elif age_min >= 45 and pnl_pct < 0.20:
+                                    exit_reason = "SESSION_EXPIRADO_45M (Janela de 45m encerrou sem expansão)"
                             else:
                                 # 2. Proteção de Lucro no Topo para SCALP_BOOK
                                 if max_pnl_pct >= 0.25 and (
@@ -1114,11 +1120,21 @@ class BinanceFuturesExecutor:
                             elif "ROCKET" in pos_mode:
                                 horizon_val = "Minutos a Horas (~15 min a 6h)"
                                 horizon_badge = "🚀 ROCKET MEME (HORAS)"
+                            elif "SESSION" in pos_mode:
+                                horizon_val = "Intradiário (~15 min a 45 min)"
+                                horizon_badge = "🌏 SESSÃO ESPECIAL"
                             else:
                                 horizon_val = "Swing Trade (~4h a 48h)" if pos_tf in ("1h", "4h") else "Day Trade (~15m a 2h)"
                                 horizon_badge = "🎯 SWING (HORAS/DIAS)"
                         else:
-                            horizon_badge = "⚡ SCALP (MINUTOS)" if "SCALP" in pos_mode else ("🚀 ROCKET MEME" if "ROCKET" in pos_mode else "🎯 SWING")
+                            if "SCALP" in pos_mode:
+                                horizon_badge = "⚡ SCALP (MINUTOS)"
+                            elif "ROCKET" in pos_mode:
+                                horizon_badge = "🚀 ROCKET MEME"
+                            elif "SESSION" in pos_mode:
+                                horizon_badge = "🌏 SESSÃO ESPECIAL"
+                            else:
+                                horizon_badge = "🎯 SWING"
 
                         target_usd_est = (tp_p - entry_p) * qty if (tp_p > entry_p and qty > 0) else 0.03
                         risk_usd_est = (entry_p - stop_p) * qty if (entry_p > stop_p and qty > 0) else 0.02

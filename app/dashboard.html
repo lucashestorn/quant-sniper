@@ -201,6 +201,11 @@
                     <i data-lucide="rocket" class="w-4 h-4 text-purple-400"></i>
                     <span>🚀 ROCKET MEMES (10-15%+)</span>
                 </button>
+                <button onclick="switchTerminalTab('session')" id="tabBtnSession"
+                    class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700">
+                    <i data-lucide="globe" class="w-4 h-4 text-sky-400"></i>
+                    <span>🌏 SESSÕES (China & EUA)</span>
+                </button>
                 <button onclick="switchTerminalTab('charts')" id="tabBtnCharts"
                     class="px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-2 transition bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700">
                     <i data-lucide="line-chart" class="w-4 h-4 text-emerald-400"></i>
@@ -214,7 +219,10 @@
             </div>
             <div class="flex items-center gap-2 text-xs mono pr-2">
                 <span class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-slate-300 font-bold" id="kpiPartitionSlots">
-                    ⚡ Scalp: 1/1 | 🎯 Sniper: 1/1 | 🚀 Meme: 1/1
+                    ⚡ Scalp: 1/1 | 🎯 Sniper: 1/1 | 🚀 Meme: 1/1 | 🌏 Sessão: 1/1
+                </span>
+                <span class="px-2.5 py-1 rounded bg-sky-950/90 border border-sky-800 text-sky-300 font-bold hidden md:inline" id="sessionHeaderBadge">
+                    🌏 SESSÃO: CARREGANDO...
                 </span>
                 <span class="px-2.5 py-1 rounded bg-emerald-950/90 border border-emerald-800 text-emerald-300 font-bold hidden sm:inline" id="scalpActiveTargetBadge">
                     Alvo Scalp: +0.50% | SL: -0.35%
@@ -929,6 +937,197 @@
                 </div>
             </section>
         </div>
+
+        <!-- ========================================================================= -->
+        <!-- ÁREA 5: JANELAS INSTITUCIONAIS (VIRADAS DA CHINA & ALMOÇO NOS EUA)       -->
+        <!-- ========================================================================= -->
+        <div id="workspaceSession" class="space-y-5 hidden">
+            <!-- BANNER DE STATUS DA SESSÃO ATIVA & RELÓGIOS DE FUSOS GLOBAIS -->
+            <section class="card-glass rounded-xl p-5 border border-sky-500/50 bg-gradient-to-r from-slate-900/95 via-slate-900 to-sky-950/30">
+                <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2.5 rounded-xl bg-sky-500/20 border border-sky-500/40 text-sky-400">
+                            <i data-lucide="globe" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h2 class="text-sm font-black uppercase tracking-wider text-white">
+                                    Janelas Institucionais Globais — Viradas da China & Almoço nos EUA
+                                </h2>
+                                <span id="sessionActivePill" class="px-2.5 py-0.5 rounded text-xs font-black mono bg-sky-950 text-sky-300 border border-sky-700 animate-pulse">
+                                    CALCULANDO SESSÃO...
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-300 mt-0.5" id="sessionDescriptionText">
+                                Aproveitando os 2 horários de virada da China (00h e 08h UTC) para rompimentos de agressão e o Almoço nos EUA (16h-18h UTC) para reversão à VWAP.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="toggleSessionSpecial()" id="btnToggleSessionSpecial"
+                            class="px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition shadow-lg bg-sky-500 hover:bg-sky-400 text-black">
+                            <i data-lucide="power" class="w-4 h-4"></i>
+                            <span id="txtToggleSessionSpecial">SESSÃO: ATIVADA</span>
+                        </button>
+                        <button onclick="triggerSessionManualScan()" id="btnManualSessionScan"
+                            class="px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition bg-slate-800 hover:bg-slate-700 text-white border border-slate-600">
+                            <i data-lucide="scan-line" class="w-4 h-4 text-sky-400"></i>
+                            <span>Varredura Imediata Agora</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- RELÓGIOS DE FUSO HORÁRIO EM TEMPO REAL -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                    <div class="p-3 rounded-lg bg-slate-900/90 border border-slate-800">
+                        <div class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5 mb-1">
+                            <span>🌐 Tempo Universal</span>
+                            <span class="text-[9px] px-1 rounded bg-slate-800 text-slate-300 font-mono">UTC</span>
+                        </div>
+                        <div class="text-lg font-black mono text-white" id="clockUtc">--:--:-- UTC</div>
+                        <div class="text-[10px] text-slate-400">Referência Binance & Velas</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/90 border border-red-900/40">
+                        <div class="text-[10px] uppercase font-bold text-red-400 flex items-center gap-1.5 mb-1">
+                            <span>🇨🇳 China / Hong Kong</span>
+                            <span class="text-[9px] px-1 rounded bg-red-950 text-red-300 font-mono">UTC+8</span>
+                        </div>
+                        <div class="text-lg font-black mono text-red-300" id="clockBeijing">--:--:-- CST</div>
+                        <div class="text-[10px] text-slate-400">Virada #1: 08h • Virada #2: 16h</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/90 border border-blue-900/40">
+                        <div class="text-[10px] uppercase font-bold text-blue-400 flex items-center gap-1.5 mb-1">
+                            <span>🇺🇸 Nova York (Wall St)</span>
+                            <span class="text-[9px] px-1 rounded bg-blue-950 text-blue-300 font-mono">UTC-5</span>
+                        </div>
+                        <div class="text-lg font-black mono text-blue-300" id="clockNy">--:--:-- EST</div>
+                        <div class="text-[10px] text-slate-400">Almoço EUA: 12h às 14h NY</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-900/90 border border-emerald-900/40">
+                        <div class="text-[10px] uppercase font-bold text-emerald-400 flex items-center gap-1.5 mb-1">
+                            <span>🇧🇷 São Paulo / Brasil</span>
+                            <span class="text-[9px] px-1 rounded bg-emerald-950 text-emerald-300 font-mono">BRT</span>
+                        </div>
+                        <div class="text-lg font-black mono text-emerald-300" id="clockBrt">--:--:-- BRT</div>
+                        <div class="text-[10px] text-slate-400">Viradas: 21h e 05h • Almoço: 13h-15h</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CARDS DAS 2 JANELAS COM AS FÓRMULAS IMPLEMENTADAS -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- CARD 1: OS 2 HORÁRIOS DE VIRADA DA CHINA -->
+                <div class="card-glass rounded-xl p-4 border border-amber-500/40 space-y-3">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xl">🌏</span>
+                            <div>
+                                <h3 class="text-xs font-black uppercase tracking-wider text-white">
+                                    Os 2 Horários de Virada da China (Ásia)
+                                </h3>
+                                <p class="text-[11px] text-amber-300 font-mono font-bold">
+                                    Virada #1: 00:00 UTC (21h BRT) • Virada #2: 08:00 UTC (05h BRT)
+                                </p>
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold mono bg-amber-950 text-amber-300 border border-amber-800">
+                            FUNDING RESET + FLOW
+                        </span>
+                    </div>
+
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                        A virada de <strong>00:00 UTC</strong> marca a abertura dos pregões de Hong Kong/Xangai e o reset da taxa de financiamento (Funding Rate de 8h). A de <strong>08:00 UTC</strong> marca o fechamento comercial da Ásia e abertura de Londres. Nesses momentos ocorre expansão violenta de range e volume institucional.
+                    </p>
+
+                    <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5 font-mono text-[11px]">
+                        <div class="text-slate-400 font-bold uppercase text-[10px]">Fórmula Executada (Breakout & Agressão):</div>
+                        <div class="text-emerald-400 font-bold">
+                            close > sma_21 & range > 1.70 * mean(range, 30) & volume > 1.70 * mean(vol, 30) & is_green == 1
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-1 text-[10px]">
+                            <span class="text-slate-300">Stop Loss: <strong class="text-rose-400">-0.75% (Abaixo da mínima)</strong></span>
+                            <span class="text-slate-300">Take Profit: <strong class="text-emerald-400">+1.50% (1:2 R:R)</strong></span>
+                        </div>
+                        <div class="text-[10px] text-slate-400">Proteção: Trailing Breakeven ativado automaticamente em +0.90%.</div>
+                    </div>
+                </div>
+
+                <!-- CARD 2: ALMOÇO NOS EUA -->
+                <div class="card-glass rounded-xl p-4 border border-blue-500/40 space-y-3">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xl">🥪</span>
+                            <div>
+                                <h3 class="text-xs font-black uppercase tracking-wider text-white">
+                                    Almoço nos EUA (Wall Street Lunch Lull)
+                                </h3>
+                                <p class="text-[11px] text-blue-300 font-mono font-bold">
+                                    Janela: 16:00 às 18:00 UTC (12h-14h Nova York / 13h-15h BRT)
+                                </p>
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold mono bg-blue-950 text-blue-300 border border-blue-800">
+                            FADE THE EXTREMES
+                        </span>
+                    </div>
+
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                        Durante o intervalo de almoço dos traders institucionais em Manhattan, o volume de rompimento seca e o book afina. Movimentos esticados perdem força e sofrem <strong>Exaustão e Reversão à VWAP</strong>. Fade dos rompimentos falsos.
+                    </p>
+
+                    <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5 font-mono text-[11px]">
+                        <div class="text-slate-400 font-bold uppercase text-[10px]">Fórmula Executada (F1: Exaustão VWAP):</div>
+                        <div class="text-sky-400 font-bold">
+                            abs(close - vwap_24) / vwap_24 > 0.014 & vol_ratio >= 1.35 & lower_wick >= 0.25 * range
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-1 text-[10px]">
+                            <span class="text-slate-300">Stop Loss: <strong class="text-rose-400">-0.75% fixo</strong></span>
+                            <span class="text-slate-300">Take Profit: <strong class="text-sky-400">+1.50% (Retorno à VWAP)</strong></span>
+                        </div>
+                        <div class="text-[10px] text-slate-400">Proteção: Venda automática ao atingir a VWAP central ou +1.50%.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TABELA AO VIVO DE DIAGNÓSTICO DOS ATIVOS AUDITADOS NAS SESSÕES -->
+            <section class="card-glass rounded-xl p-4 border border-slate-700">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-3 pb-2 border-b border-slate-800">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="radar" class="w-4 h-4 text-sky-400"></i>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                            Radar dos 12 Ativos Monitorados para as Fórmulas de Sessão
+                        </h3>
+                    </div>
+                    <div class="text-[11px] mono text-slate-400" id="sessionLastScanTime">
+                        Varredura automática: a cada 30 segundos
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                                <th class="py-2.5 px-3">Ativo</th>
+                                <th class="py-2.5 px-3">Preço Atual</th>
+                                <th class="py-2.5 px-3">Média SMA 21</th>
+                                <th class="py-2.5 px-3">Expansão de Range (30p)</th>
+                                <th class="py-2.5 px-3">Volume de Agressão</th>
+                                <th class="py-2.5 px-3">Distância da VWAP</th>
+                                <th class="py-2.5 px-3">Cauda / Rejeição</th>
+                                <th class="py-2.5 px-3 text-right">Status do Gatilho</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableSessionDiagnostics" class="divide-y divide-slate-800/60 mono">
+                            <tr>
+                                <td colspan="8" class="py-6 text-center text-slate-500">
+                                    Clique em "Varredura Imediata Agora" ou aguarde o ciclo de 30s para atualizar o radar ao vivo.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
     </main>
 
     <!-- MODAL DE CREDENCIAIS BINANCE -->
@@ -1054,10 +1253,12 @@
             const wScalp = document.getElementById('workspaceScalp');
             const wSniper = document.getElementById('workspaceSniper');
             const wRocket = document.getElementById('workspaceRocket');
+            const wSession = document.getElementById('workspaceSession');
             const wCharts = document.getElementById('workspaceCharts');
             const bScalp = document.getElementById('tabBtnScalp');
             const bSniper = document.getElementById('tabBtnSniper');
             const bRocket = document.getElementById('tabBtnRocket');
+            const bSession = document.getElementById('tabBtnSession');
             const bCharts = document.getElementById('tabBtnCharts');
             const bBoth = document.getElementById('tabBtnBoth');
 
@@ -1071,11 +1272,13 @@
             wScalp.classList.add('hidden');
             wSniper.classList.add('hidden');
             if (wRocket) wRocket.classList.add('hidden');
+            if (wSession) wSession.classList.add('hidden');
             if (wCharts) wCharts.classList.add('hidden');
 
             bScalp.className = inactiveClass;
             bSniper.className = inactiveClass;
             if (bRocket) bRocket.className = inactiveClass;
+            if (bSession) bSession.className = inactiveClass;
             if (bCharts) bCharts.className = inactiveClass;
             if (bBoth) bBoth.className = 'px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800';
 
@@ -1088,6 +1291,10 @@
             } else if (tab === 'rocket') {
                 if (wRocket) wRocket.classList.remove('hidden');
                 if (bRocket) bRocket.className = activePurple;
+            } else if (tab === 'session') {
+                if (wSession) wSession.classList.remove('hidden');
+                if (bSession) bSession.className = activeSky;
+                if (currentStatus) renderSessionView(currentStatus);
             } else if (tab === 'charts') {
                 if (wCharts) wCharts.classList.remove('hidden');
                 if (bCharts) bCharts.className = activeEmerald;
@@ -1096,6 +1303,7 @@
                 wScalp.classList.remove('hidden');
                 wSniper.classList.remove('hidden');
                 if (wRocket) wRocket.classList.remove('hidden');
+                if (wSession) wSession.classList.remove('hidden');
                 if (bBoth) bBoth.className = 'px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition bg-amber-500 text-black shadow-lg';
             }
         }
@@ -1833,6 +2041,148 @@
 
             // Atualiza Gráficos & Linha do Saldo
             updateChartsView(data);
+
+            // Atualiza Janelas Institucionais (China & EUA)
+            renderSessionView(data);
+        }
+
+        function renderSessionView(data) {
+            const sess = data.session_info;
+            if (!sess) return;
+
+            // Header badge
+            const hBadge = document.getElementById('sessionHeaderBadge');
+            if (hBadge) {
+                if (sess.is_special) {
+                    hBadge.innerText = `🔥 ${sess.session_badge}`;
+                    hBadge.className = 'px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500 text-amber-300 font-bold hidden md:inline animate-pulse';
+                } else {
+                    hBadge.innerText = `🌏 ${sess.session_badge}`;
+                    hBadge.className = 'px-2.5 py-1 rounded bg-sky-950/90 border border-sky-800 text-sky-300 font-bold hidden md:inline';
+                }
+            }
+
+            // Clocks
+            if (document.getElementById('clockUtc')) document.getElementById('clockUtc').innerText = sess.clock_utc;
+            if (document.getElementById('clockBeijing')) document.getElementById('clockBeijing').innerText = sess.clock_beijing;
+            if (document.getElementById('clockNy')) document.getElementById('clockNy').innerText = sess.clock_ny;
+            if (document.getElementById('clockBrt')) document.getElementById('clockBrt').innerText = sess.clock_brt;
+
+            // Session Pill & Description
+            const sPill = document.getElementById('sessionActivePill');
+            if (sPill) {
+                if (sess.is_special) {
+                    sPill.innerText = `🔥 JANELA ATIVA: ${sess.session_name}`;
+                    sPill.className = 'px-2.5 py-0.5 rounded text-xs font-black mono bg-amber-500 text-black border border-amber-400 shadow-lg animate-pulse';
+                } else {
+                    sPill.innerText = `⏳ Próxima Janela Especial: ${sess.next_special_window}`;
+                    sPill.className = 'px-2.5 py-0.5 rounded text-xs font-black mono bg-sky-950 text-sky-300 border border-sky-700';
+                }
+            }
+
+            const sDesc = document.getElementById('sessionDescriptionText');
+            if (sDesc) {
+                sDesc.innerText = `${sess.description} • Fórmula Armada: ${sess.formula_name}`;
+            }
+
+            // Toggle Button
+            const isSessionOn = Boolean(data.session_special_enabled !== false);
+            const btnToggle = document.getElementById('btnToggleSessionSpecial');
+            const txtToggle = document.getElementById('txtToggleSessionSpecial');
+            if (btnToggle && txtToggle) {
+                if (isSessionOn) {
+                    btnToggle.className = 'px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition shadow-lg bg-sky-500 hover:bg-sky-400 text-black';
+                    txtToggle.innerText = 'SESSÃO: ATIVADA';
+                } else {
+                    btnToggle.className = 'px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 transition shadow-lg bg-rose-600 hover:bg-rose-500 text-white';
+                    txtToggle.innerText = 'SESSÃO: PAUSADA';
+                }
+            }
+        }
+
+        async function toggleSessionSpecial() {
+            const current = Boolean(currentStatus?.session_special_enabled !== false);
+            try {
+                const res = await fetch('/api/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_special_enabled: !current })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (currentStatus) currentStatus.session_special_enabled = !current;
+                    renderSessionView(currentStatus);
+                }
+            } catch (e) {
+                console.error('Erro ao alternar modo de sessão:', e);
+            }
+        }
+
+        async function triggerSessionManualScan() {
+            const btn = document.getElementById('btnManualSessionScan');
+            const originalHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin text-sky-400"></i><span>Varrendo 12 Ativos...</span>';
+                if (window.lucide) lucide.createIcons();
+            }
+
+            try {
+                const res = await fetch('/api/session/trigger', { method: 'POST' });
+                if (res.ok) {
+                    const result = await res.json();
+                    renderSessionDiagnosticsTable(result.diagnostics || []);
+                    if (result.fired_trade) {
+                        alert(`🎯 ORDEM DE SESSÃO DISPARADA!\n${result.fired_trade.symbol} @ ${result.fired_trade.order_receipt.entry_price}`);
+                    }
+                }
+            } catch (err) {
+                console.error('Erro na varredura manual de sessão:', err);
+            } finally {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    if (window.lucide) lucide.createIcons();
+                }
+            }
+        }
+
+        function renderSessionDiagnosticsTable(items) {
+            const tbody = document.getElementById('tableSessionDiagnostics');
+            if (!tbody) return;
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-slate-500">Nenhum dado auditado ainda.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = items.map(item => {
+                const sym = item.symbol || '--';
+                const p = Number(item.price || 0).toFixed(item.price > 10 ? 2 : 4);
+                const sma = Number(item.sma_21 || 0).toFixed(item.price > 10 ? 2 : 4);
+                const rRatio = Number(item.range_ratio || 1).toFixed(2);
+                const vRatio = Number(item.vol_ratio || 1).toFixed(2);
+                const distV = Number(item.dist_vwap_pct || 0).toFixed(2);
+                const wick = Number(item.lower_wick_ratio || 0).toFixed(2);
+
+                const fired = Boolean(item.signal_fired);
+                const statusBadge = fired
+                    ? '<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600 font-bold">🎯 GATILHO ATENDIDO</span>'
+                    : `<span class="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800 text-[10px]">${item.reason || 'Em Análise'}</span>`;
+
+                return `
+                    <tr class="hover:bg-slate-900/40 transition">
+                        <td class="py-2 px-3 font-bold text-white flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full ${fired ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'}"></span>
+                            <span>${sym}</span>
+                        </td>
+                        <td class="py-2 px-3 text-slate-200">$${p}</td>
+                        <td class="py-2 px-3 text-slate-400">$${sma}</td>
+                        <td class="py-2 px-3 ${Number(rRatio) >= 1.7 ? 'text-amber-300 font-bold' : 'text-slate-300'}">${rRatio}x</td>
+                        <td class="py-2 px-3 ${Number(vRatio) >= 1.7 ? 'text-sky-300 font-bold' : 'text-slate-300'}">${vRatio}x</td>
+                        <td class="py-2 px-3 ${Number(distV) <= -1.35 ? 'text-rose-400 font-bold' : Number(distV) >= 1.5 ? 'text-emerald-400 font-bold' : 'text-slate-400'}">${distV > 0 ? '+' : ''}${distV}%</td>
+                        <td class="py-2 px-3 text-slate-300">${wick}</td>
+                        <td class="py-2 px-3 text-right">${statusBadge}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function updateChartsView(status) {

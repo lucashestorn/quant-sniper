@@ -12,7 +12,7 @@ import logging
 import os
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Set
 
@@ -29,7 +29,7 @@ from app.engine_polars import (
     calibrate_symbol_champion,
     evaluate_closed_candle_signal,
 )
-from app.executor_ccxt import BinanceFuturesExecutor
+from app.executor_ccxt import BinanceFuturesExecutor, VISION_BASE_URL
 
 load_dotenv()
 
@@ -49,6 +49,9 @@ class ToggleRequest(BaseModel):
     max_sniper_positions: Optional[int] = None
     max_scalp_positions: Optional[int] = None
     max_rocket_positions: Optional[int] = None
+    max_session_positions: Optional[int] = None
+    session_special_enabled: Optional[bool] = None
+    session_margin_usdt: Optional[float] = None
     allow_scalp_borrow_idle_capital: Optional[bool] = None
     order_margin_usdt: Optional[float] = None
     scalp_margin_usdt: Optional[float] = None
@@ -95,10 +98,11 @@ class SniperRuntimeState:
 
     def __init__(self) -> None:
         self.enabled: bool = os.getenv("BOT_ENABLED", "true").lower() in ("true", "1", "yes")
-        # Vagas dedicadas e isoladas para cada modalidade (Scalp Book L2, Sniper Swing e Rocket Memes)
+        # Vagas dedicadas e isoladas para cada modalidade (Scalp Book L2, Sniper Swing, Rocket Memes e Sessão Especial)
         self.max_scalp_positions: int = int(os.getenv("MAX_SCALP_POSITIONS", "1"))
         self.max_sniper_positions: int = int(os.getenv("MAX_SNIPER_POSITIONS", "1"))
         self.max_rocket_positions: int = int(os.getenv("MAX_ROCKET_POSITIONS", "1"))
+        self.max_session_positions: int = int(os.getenv("MAX_SESSION_POSITIONS", "1"))
         self.max_concurrent_positions: int = (
             self.max_scalp_positions + self.max_sniper_positions + self.max_rocket_positions
         )
@@ -108,6 +112,11 @@ class SniperRuntimeState:
         self.lookback_days: int = int(os.getenv("LOOKBACK_DAYS", "15"))
         self.timeframe_filter: str = os.getenv("TIMEFRAME_FILTER", "ALL").upper()
         self.timeframes: List[str] = ["5m", "15m", "30m", "1h"]
+
+        # Motor de Sessões Globais (Virada da China 00h/08h UTC e Almoço nos EUA 16h-18h UTC)
+        self.session_special_enabled: bool = os.getenv("SESSION_SPECIAL_ENABLED", "true").lower() in ("true", "1", "yes")
+        self.session_margin_usdt: float = float(os.getenv("SESSION_MARGIN_USDT", "5.25"))
+        self.last_session_scan_utc: Optional[str] = None
 
         # Configuração dedicada e separada do Motor de Scalp (Livro de Ofertas L2)
         self.scalp_tp_pct: float = float(os.getenv("SCALP_TP_PCT", "0.50"))
@@ -183,6 +192,159 @@ def _determine_closed_timeframes(now_utc: datetime) -> List[str]:
     if minute == 0:
         closed.append("1h")
     return closed
+
+
+SESSION_SYMBOLS: List[str] = [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "BNB/USDT",
+    "XRP/USDT",
+    "DOGE/USDT",
+    "SUI/USDT",
+    "ADA/USDT",
+    "AVAX/USDT",
+    "LINK/USDT",
+    "NEAR/USDT",
+    "APT/USDT",
+]
+
+
+def get_market_session_info(now_utc: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    Identifica as janelas institucionais do mercado financeiro global e crypto:
+    1. Virada da China #1 (23:30 - 01:30 UTC): Abertura Ásia / Virada Diária / Funding Rate 00:00 UTC.
+    2. Virada da China #2 (07:30 - 09:00 UTC): Fechamento Ásia & Abertura Londres / Funding Rate 08:00 UTC.
+    3. Almoço nos EUA (16:00 - 18:00 UTC): Wall Street Lunch Lull (12h-14h NY / 13h-15h BRT).
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    hour = now_utc.hour
+    minute = now_utc.minute
+    total_minutes = hour * 60 + minute
+
+    # 1. Virada da China #1: 23:30 a 01:30 UTC (Abertura Ásia / Funding Rate 00:00 UTC)
+    is_china_1 = (total_minutes >= 1410) or (total_minutes <= 90)
+
+    # 2. Virada da China #2: 07:30 a 09:00 UTC (Fechamento Ásia & Abertura Londres / Funding Rate 08:00 UTC)
+    is_china_2 = (450 <= total_minutes <= 540)
+
+    # 3. Almoço nos EUA: 16:00 a 18:00 UTC (12h-14h Nova York / 13h-15h BRT / Wall Street Lunch Lull)
+    is_us_lunch = (960 <= total_minutes <= 1080)
+
+    if is_china_1:
+        session_id = "CHINA_VIRADA_1"
+        session_name = "🌏 Virada da China #1 (Abertura Ásia & Funding 00:00 UTC)"
+        session_badge = "🌏 VIRADA DA CHINA #1 (00h UTC / 21h BRT)"
+        formula_id = "rompimento-1m"
+        formula_name = "Rompimento de Expansão & Agressão China #1"
+        formula_type = "BREAKOUT"
+        formula_rule = "close > sma_21 && range > 1.75 * mean_range(30) && volume > 1.8 * mean_vol(30) && is_green == 1"
+        stop_rule = "-0.75% (Abaixo da mínima do candle)"
+        target_rule = "+1.50% (1:2 R:R)"
+        timeframe = "5m"
+        is_special = True
+        desc = "Abertura oficial dos pregões de Xangai/Hong Kong e virada diária do mercado cripto. Forte expansão de range direcional impulsionada por agressão compradora."
+    elif is_china_2:
+        session_id = "CHINA_VIRADA_2"
+        session_name = "🌏 Virada da China #2 (Fechamento Ásia & Abertura Londres 08:00 UTC)"
+        session_badge = "🌏 VIRADA DA CHINA #2 (08h UTC / 05h BRT)"
+        formula_id = "breakout-5m"
+        formula_name = "Rompimento & Handover Institucional China #2"
+        formula_type = "BREAKOUT"
+        formula_rule = "close > sma_21 && range > 1.75 * mean_range(30) && volume > 1.8 * mean_vol(30) && is_green == 1"
+        stop_rule = "-0.75% (Abaixo da mínima do candle)"
+        target_rule = "+1.50% (1:2 R:R)"
+        timeframe = "5m"
+        is_special = True
+        desc = "Fechamento dos bancos asiáticos e abertura das mesas financeiras de Londres/Europa. Volume institucional de handover e 2º reset de funding rate."
+    elif is_us_lunch:
+        session_id = "US_LUNCH"
+        session_name = "🥪 Almoço nos EUA (Wall Street Lunch Lull 16h-18h UTC)"
+        session_badge = "🥪 ALMOÇO EUA (16h-18h UTC / 13h-15h BRT)"
+        formula_id = "exaustao-vwap"
+        formula_name = "F1: Exaustão & Reversão à VWAP (Afastamento >1.5% + Clímax Trades)"
+        formula_type = "VWAP_REVERSION"
+        formula_rule = "abs(close - vwap_24) / vwap_24 > 0.014 && vol_ratio >= 1.4 && lower_wick >= 0.25 * range"
+        stop_rule = "-0.75% fixo"
+        target_rule = "+1.50% (Retorno até a VWAP central)"
+        timeframe = "5m"
+        is_special = True
+        desc = "Pausa para almoço das mesas institucionais de Nova York (12h-14h NY). A liquidez direcional estagna e falsos rompimentos revertem rapidamente em direção à VWAP."
+    else:
+        if 8 <= hour < 16:
+            base_s = "🏛️ Londres / Europa (08h-16h UTC)"
+        elif 13 <= hour < 21:
+            base_s = "🗽 Nova York / EUA (13h-21h UTC)"
+        else:
+            base_s = "🌏 Ásia / Pacífico (00h-08h UTC)"
+
+        session_id = "REGULAR"
+        session_name = f"📈 {base_s}"
+        session_badge = f"{base_s}"
+        formula_id = "standard-quant"
+        formula_name = "Sniper Quant Multi-Timeframe + Scalp Book L2"
+        formula_type = "STANDARD"
+        formula_rule = "Walk-Forward Polars 5m, 15m, 30m, 1h + Livro L2 Depth"
+        stop_rule = "Dinâmico ATR"
+        target_rule = "1:2.0 a 1:2.5 R:R"
+        timeframe = "Multi"
+        is_special = False
+        desc = "Operação normal 24/7 com proteção de capital e varredura de velas fechadas."
+
+    special_windows = [
+        (450, "Virada da China #2 (07:30 UTC / 04:30 BRT)"),
+        (960, "Almoço nos EUA (16:00 UTC / 13:00 BRT)"),
+        (1410, "Virada da China #1 (23:30 UTC / 20:30 BRT)"),
+    ]
+    next_window = ""
+    minutes_left = 0
+    if not is_special:
+        for w_min, w_name in special_windows:
+            if total_minutes < w_min:
+                diff = w_min - total_minutes
+                h = diff // 60
+                m = diff % 60
+                next_window = f"{w_name} em {h}h {m:02d}m"
+                minutes_left = diff
+                break
+        if not next_window:
+            diff = (1440 - total_minutes) + 450
+            h = diff // 60
+            m = diff % 60
+            next_window = f"Virada da China #2 (07:30 UTC) em {h}h {m:02d}m"
+            minutes_left = diff
+    else:
+        next_window = "🔥 JANELA ESPECIAL ATIVA AGORA"
+
+    utc_str = now_utc.strftime("%H:%M:%S UTC")
+    brt_time = now_utc - timedelta(hours=3)
+    brt_str = brt_time.strftime("%H:%M:%S BRT")
+    beijing_time = now_utc + timedelta(hours=8)
+    beijing_str = beijing_time.strftime("%H:%M:%S CST (Pequim)")
+    ny_time = now_utc - timedelta(hours=5)
+    ny_str = ny_time.strftime("%H:%M:%S EST (Nova York)")
+
+    return {
+        "session_id": session_id,
+        "session_name": session_name,
+        "session_badge": session_badge,
+        "formula_id": formula_id,
+        "formula_name": formula_name,
+        "formula_type": formula_type,
+        "formula_rule": formula_rule,
+        "stop_rule": stop_rule,
+        "target_rule": target_rule,
+        "timeframe": timeframe,
+        "is_special": is_special,
+        "description": desc,
+        "next_special_window": next_window,
+        "minutes_until_special": minutes_left,
+        "clock_utc": utc_str,
+        "clock_brt": brt_str,
+        "clock_beijing": beijing_str,
+        "clock_ny": ny_str,
+    }
 
 
 # ============================================================================
@@ -550,6 +712,15 @@ async def lifespan(app: FastAPI):
         coalesce=True,
     )
 
+    scheduler.add_job(
+        check_session_special_trades,
+        trigger=IntervalTrigger(seconds=30),
+        id="session_special_scanner",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     scheduler.start()
     state.append_log(
         "SYSTEM_STARTUP",
@@ -638,13 +809,19 @@ async def get_status() -> Dict[str, Any]:
         "max_scalp_positions": state.max_scalp_positions,
         "max_sniper_positions": state.max_sniper_positions,
         "max_rocket_positions": state.max_rocket_positions,
+        "max_session_positions": state.max_session_positions,
         "scalp_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]),
         "sniper_positions_count": len([p for p in state.open_positions if p.get("mode") in ("SNIPER_CANDLE", "SNIPER")]),
         "rocket_positions_count": len([p for p in state.open_positions if p.get("mode") in ("ROCKET_MEME", "ROCKET")]),
+        "session_positions_count": len([p for p in state.open_positions if "SESSION" in p.get("mode", "")]),
         "rocket_margin_usdt": state.rocket_margin_usdt,
         "rocket_tp_target_pct": state.rocket_tp_target_pct,
         "rocket_sl_pct": state.rocket_sl_pct,
         "rocket_auto_enabled": state.rocket_auto_enabled,
+        "session_info": get_market_session_info(),
+        "session_special_enabled": state.session_special_enabled,
+        "session_margin_usdt": state.session_margin_usdt,
+        "last_session_scan_utc": state.last_session_scan_utc,
         "closed_trades": executor.closed_trades,
         "equity_history": executor.equity_history,
         "wallet_balance": state.wallet_balance,
@@ -893,9 +1070,17 @@ async def toggle_bot(
             state.rocket_margin_usdt = max(1.0, float(payload.rocket_margin_usdt))
             changes.append(f"MargemRocket=${state.rocket_margin_usdt:.2f}")
 
+        if payload.session_margin_usdt is not None:
+            state.session_margin_usdt = max(1.0, float(payload.session_margin_usdt))
+            changes.append(f"MargemSessao=${state.session_margin_usdt:.2f}")
+
         if payload.max_rocket_positions is not None:
             state.max_rocket_positions = max(0, min(10, int(payload.max_rocket_positions)))
             changes.append(f"VagasRocket={state.max_rocket_positions}")
+
+        if payload.max_session_positions is not None:
+            state.max_session_positions = max(0, min(10, int(payload.max_session_positions)))
+            changes.append(f"VagasSessao={state.max_session_positions}")
 
         if payload.max_sniper_positions is not None:
             state.max_sniper_positions = max(0, min(10, int(payload.max_sniper_positions)))
@@ -912,6 +1097,10 @@ async def toggle_bot(
             state.max_concurrent_positions = (
                 state.max_scalp_positions + state.max_sniper_positions + state.max_rocket_positions
             )
+
+        if payload.session_special_enabled is not None:
+            state.session_special_enabled = bool(payload.session_special_enabled)
+            changes.append(f"SessoesEspeciais={'ON' if state.session_special_enabled else 'OFF'}")
 
         if payload.min_profit_factor is not None:
             new_pf = max(1.05, float(payload.min_profit_factor))
@@ -1494,3 +1683,205 @@ async def check_rocket_meme_breakouts() -> None:
             break
         except Exception as exc:
             logger.debug(f"Erro ao avaliar ignição Rocket {sym}: {exc}")
+
+
+# ============================================================================
+# MOTOR DE SESSÕES INSTITUCIONAIS: VIRADA DA CHINA (00h/08h UTC) & ALMOÇO EUA (16h-18h UTC)
+# ============================================================================
+
+async def check_session_special_trades(force_scan: bool = False) -> Dict[str, Any]:
+    """
+    Motor 24/7 de Janelas Especiais Institucionais:
+    - Virada da China #1 (23:30 - 01:30 UTC): Rompimento de Expansão & Agressão (Range 1.8x + Volume 2x).
+    - Virada da China #2 (07:30 - 09:00 UTC): Rompimento & Handover Londres (Range 1.8x + Volume 2x).
+    - Almoço nos EUA (16:00 - 18:00 UTC): F1 Exaustão & Reversão à VWAP (Afastamento >1.5% + Clímax Trades).
+    """
+    sess = get_market_session_info()
+    state.last_session_scan_utc = sess["clock_utc"]
+
+    if not force_scan and not (state.enabled and state.session_special_enabled):
+        return {"status": "SKIPPED", "reason": "Bot ou Sessões Especiais desativados.", "session": sess}
+
+    if not force_scan and not sess["is_special"]:
+        return {"status": "STANDBY", "reason": "Fora de janelas institucionais especiais.", "session": sess}
+
+    if executor.market_type != "spot":
+        return {"status": "SKIPPED", "reason": "Modo spot ativo.", "session": sess}
+
+    session_positions = [p for p in state.open_positions if "SESSION" in p.get("mode", "")]
+    if len(session_positions) >= state.max_session_positions and not force_scan:
+        return {"status": "FULL", "reason": f"Vagas de Sessão atingidas ({len(session_positions)}/{state.max_session_positions}).", "session": sess}
+
+    free_usdt = float(state.wallet_balance.get("free_usdt") or 0.0)
+    if free_usdt < 5.20 and not force_scan:
+        return {"status": "INSUFFICIENT_FUNDS", "reason": f"Saldo livre insuficiente (${free_usdt:.2f} < $5.20).", "session": sess}
+
+    open_symbols = {p.get("symbol") for p in state.open_positions}
+    scanned_results: List[Dict[str, Any]] = []
+    fired_trade: Optional[Dict[str, Any]] = None
+
+    for sym in SESSION_SYMBOLS:
+        if sym in open_symbols and not force_scan:
+            scanned_results.append({"symbol": sym, "evaluated": False, "reason": "Posição já aberta neste ativo."})
+            continue
+
+        raw_id = sym.replace("/", "")
+        try:
+            assert executor.http_client is not None
+            resp = await executor.http_client.get(
+                f"{VISION_BASE_URL}/klines",
+                params={"symbol": raw_id, "interval": "5m", "limit": 40},
+            )
+            if resp.status_code != 200:
+                scanned_results.append({"symbol": sym, "evaluated": False, "reason": f"HTTP {resp.status_code}"})
+                continue
+
+            klines = resp.json()
+            if len(klines) < 32:
+                scanned_results.append({"symbol": sym, "evaluated": False, "reason": "Histórico insuficiente de 5m."})
+                continue
+
+            # Anti-repainting: avalia o candle fechado [-2]
+            closed_c = klines[-2]
+            prev_klines = klines[:-2]
+
+            c_open = float(closed_c[1])
+            c_high = float(closed_c[2])
+            c_low = float(closed_c[3])
+            c_close = float(closed_c[4])
+            c_vol = float(closed_c[5])
+            c_trades = int(closed_c[8]) if len(closed_c) > 8 else 0
+
+            # Médias e volatilidade
+            prev_closes = [float(k[4]) for k in prev_klines[-21:]]
+            sma_21 = sum(prev_closes) / len(prev_closes) if prev_closes else c_close
+
+            ranges = [(float(k[2]) - float(k[3])) for k in prev_klines[-30:]]
+            avg_range_30 = sum(ranges) / len(ranges) if ranges else 1e-6
+            cur_range = c_high - c_low
+            range_ratio = (cur_range / avg_range_30) if avg_range_30 > 0 else 1.0
+
+            vols = [float(k[5]) for k in prev_klines[-30:]]
+            avg_vol_30 = sum(vols) / len(vols) if vols else 1.0
+            vol_ratio = (c_vol / avg_vol_30) if avg_vol_30 > 0 else 1.0
+
+            # Cálculo da VWAP móvel de 24 períodos
+            recent_24 = prev_klines[-24:] + [closed_c]
+            sum_pv = sum(((float(k[2]) + float(k[3]) + float(k[4])) / 3.0) * float(k[5]) for k in recent_24)
+            sum_v = sum(float(k[5]) for k in recent_24)
+            vwap_24 = (sum_pv / sum_v) if sum_v > 0 else c_close
+            dist_vwap_pct = ((c_close - vwap_24) / vwap_24) * 100.0
+
+            lower_wick = (min(c_open, c_close) - c_low)
+            lower_wick_ratio = (lower_wick / cur_range) if cur_range > 0 else 0.0
+
+            is_green = (c_close > c_open)
+            body_ratio = (abs(c_close - c_open) / cur_range) if cur_range > 0 else 0.0
+
+            signal_fired = False
+            trigger_reason = ""
+
+            if sess["session_id"] in ("CHINA_VIRADA_1", "CHINA_VIRADA_2"):
+                # Fórmula Rompimento & Agressão China:
+                # close > sma_21 && range > 1.70 * avg_range && volume > 1.70 * avg_vol && is_green == 1
+                cond_trend = (c_close > sma_21)
+                cond_range = (range_ratio >= 1.70)
+                cond_vol = (vol_ratio >= 1.70)
+                cond_green = is_green and (body_ratio >= 0.45)
+
+                if cond_trend and cond_range and cond_vol and cond_green:
+                    signal_fired = True
+                    trigger_reason = f"Gatilho Rompimento China atendido (Range {range_ratio:.2f}x | Vol {vol_ratio:.2f}x | Body {body_ratio:.2f})"
+                else:
+                    trigger_reason = f"Aguardando (Range: {range_ratio:.2f}x/1.7x | Vol: {vol_ratio:.2f}x/1.7x | SMA21: {'OK' if cond_trend else 'Abaixo'})"
+
+            elif sess["session_id"] == "US_LUNCH":
+                # Fórmula F1 Exaustão & Reversão à VWAP:
+                # Preço esticou para baixo (> 1.35% abaixo da VWAP), volume de clímax e cauda inferior compradora
+                cond_vwap = (dist_vwap_pct <= -1.35)
+                cond_climax = (vol_ratio >= 1.35)
+                cond_rejection = (lower_wick_ratio >= 0.25) or is_green
+
+                if cond_vwap and cond_climax and cond_rejection:
+                    signal_fired = True
+                    trigger_reason = f"Gatilho Exaustão VWAP atendido (Dist VWAP: {dist_vwap_pct:.2f}% | Vol Clímax: {vol_ratio:.2f}x | Cauda: {lower_wick_ratio:.2f})"
+                else:
+                    trigger_reason = f"Aguardando (Dist VWAP: {dist_vwap_pct:.2f}% / <= -1.35% | Vol: {vol_ratio:.2f}x)"
+            else:
+                trigger_reason = "Sessão regular: varredura em standby para janelas especiais."
+
+            candle_ts = int(closed_c[0])
+            candle_key = f"SESSION:{sym}:{sess['session_id']}:{candle_ts}"
+
+            diag = {
+                "symbol": sym,
+                "price": c_close,
+                "sma_21": round(sma_21, 6),
+                "range_ratio": round(range_ratio, 2),
+                "vol_ratio": round(vol_ratio, 2),
+                "dist_vwap_pct": round(dist_vwap_pct, 2),
+                "lower_wick_ratio": round(lower_wick_ratio, 2),
+                "body_ratio": round(body_ratio, 2),
+                "is_green": is_green,
+                "signal_fired": signal_fired,
+                "reason": trigger_reason,
+            }
+            scanned_results.append(diag)
+
+            if signal_fired and not force_scan and candle_key not in state._dispatched_candles:
+                state._dispatched_candles.add(candle_key)
+                entry_p = c_close
+                stop_p = round(entry_p * 0.9925, 6)  # -0.75%
+                tp_p = round(entry_p * 1.015, 6)    # +1.50% (1:2 R:R)
+                mode_label = f"SNIPER_SESSION_{'CHINA' if 'CHINA' in sess['session_id'] else 'US_LUNCH'}"
+
+                order_receipt = await executor.execute_atomic_order(
+                    symbol=sym,
+                    direction="LONG",
+                    entry_price=entry_p,
+                    stop_price=stop_p,
+                    take_profit_price=tp_p,
+                    margin_usdt=state.session_margin_usdt,
+                    mode=mode_label,
+                    timeframe="5m",
+                    strategy_name=sess["formula_name"],
+                    horizon="15 a 45 minutos",
+                )
+
+                fired_trade = {
+                    "symbol": sym,
+                    "session": sess["session_name"],
+                    "order_receipt": order_receipt,
+                }
+
+                state.append_log(
+                    "SESSION_ORDER_FIRED",
+                    (
+                        f"🌏 DISPARO DE SESSÃO INSTITUCIONAL: {sym} [5m] LONG "
+                        f"(${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | "
+                        f"Sessão: {sess['session_name']} | Alvo: +1.50% (${order_receipt['take_profit_price']}) | "
+                        f"SL: -0.75% (${order_receipt['stop_price']})"
+                    ),
+                    {"session_info": sess, "order_receipt": order_receipt, "diagnostics": diag},
+                )
+
+                state.open_positions = await executor.get_open_positions()
+                state.wallet_balance = await executor.get_wallet_balance()
+                break
+
+        except Exception as sym_err:
+            scanned_results.append({"symbol": sym, "evaluated": False, "reason": str(sym_err)[:100]})
+
+    return {
+        "status": "COMPLETED",
+        "session": sess,
+        "scanned_count": len(scanned_results),
+        "diagnostics": scanned_results,
+        "fired_trade": fired_trade,
+    }
+
+
+@app.post("/api/session/trigger")
+async def trigger_session_scan() -> Dict[str, Any]:
+    """Dispara imediatamente a varredura das fórmulas institucionais e retorna o diagnóstico auditado."""
+    return await check_session_special_trades(force_scan=True)
