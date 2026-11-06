@@ -378,14 +378,22 @@ class BinanceFuturesExecutor:
             }
         except Exception as exc:
             err_msg = str(exc)
-            # Se a Binance recusar a API Key por restrição regional / Passkey (-2015 / -2014 / 451),
-            # ativamos a Carteira Shadow Spot em código com preços reais da Binance!
+            # Se a Binance recusar a API Key por restrição regional (HTTP 451) ou IP
             self.shadow_mode_active = True
             used_shadow = sum(p.get("notional_usd", 0.0) for p in self.shadow_positions.values())
             total_shadow = self.shadow_usdt_free + used_shadow
 
-            # Limpa mensagem de erro para não exibir banner vermelho bloqueante
-            self.last_auth_error = None
+            if "451" in err_msg or "restricted location" in err_msg.lower():
+                self.last_auth_error = (
+                    "Bloqueio Geográfico da Binance (HTTP 451): A VPS do Coolify está hospedada nos EUA "
+                    "(Boston - 2.25.215.205), onde a Binance.com é proibida por lei. "
+                    "Para operar na nuvem, altere o datacenter da VPS para o Brasil/Europa na Hostinger, ou configure um Proxy não-americano."
+                )
+                mode_note = "VPS NOS EUA (BLOQUEIO 451 BINANCE)"
+            else:
+                self.last_auth_error = f"Aviso API Binance: {err_msg[:160]}"
+                mode_note = "SPOT VIRTUAL (BYPASS ATIVO)"
+
             logger.info(
                 f"Modo Shadow Spot Live ativo (API Binance retornou: {err_msg[:140]}). "
                 f"Saldo operacional: ${total_shadow:.2f} USDT."
@@ -395,8 +403,8 @@ class BinanceFuturesExecutor:
                 "free_usdt": round(self.shadow_usdt_free, 2),
                 "used_usdt": round(used_shadow, 2),
                 "authenticated": True,
-                "mode_note": "SPOT VIRTUAL (BYPASS REGIÃO ATIVO)",
-                "error": None,
+                "mode_note": mode_note,
+                "error": self.last_auth_error,
             }
 
     async def fetch_top_liquid_symbols(
