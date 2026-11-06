@@ -644,15 +644,13 @@ class BinanceFuturesExecutor:
                 live_tak = mom["taker_buy_pct"]
                 pos["live_buy_pressure_pct"] = live_buy
                 pos["live_taker_buy_pct"] = live_tak
-                if max_pnl_pct >= 0.25 and (
-                    (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
-                    or (live_buy < 44.0 and live_tak < 45.0 and pnl_pct >= 0.05)
-                ):
+                # Proteção inteligente com folga: dá espaço para o scalp respirar e buscar o Take Profit
+                if max_pnl_pct >= 0.42 and pnl_pct <= 0.18:
                     exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
-                elif age_min >= 1.5 and live_buy <= 40.0 and live_tak <= 42.0:
-                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book={live_buy}% | Tape={live_tak}%)"
-                elif age_min >= float(self.max_hold_minutes) and (live_buy < 49.0 or live_tak < 47.0):
-                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f}m sem romper)"
+                elif age_min >= 4.0 and live_buy <= 30.0 and live_tak <= 32.0:
+                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Despejo Book={live_buy}% | Tape={live_tak}%)"
+                elif age_min >= max(20.0, float(self.max_hold_minutes)) and pnl_pct <= -0.15 and live_buy < 42.0:
+                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f}m estagnado no negativo)"
 
             if exit_reason is not None:
                 exit_val = qty * mark_p * (1.0 - 0.0011)
@@ -1084,18 +1082,15 @@ class BinanceFuturesExecutor:
                                 elif age_min >= 45 and pnl_pct < 0.20:
                                     exit_reason = "SESSION_EXPIRADO_45M (Janela de 45m encerrou sem expansão)"
                             else:
-                                # 2. Proteção de Lucro no Topo para SCALP_BOOK
-                                if max_pnl_pct >= 0.25 and (
-                                    (pnl_pct <= max_pnl_pct * 0.58 and pnl_pct >= 0.08)
-                                    or (live_buy_pct < 44.0 and live_taker_pct < 45.0 and pnl_pct >= 0.05)
-                                ):
+                                # 2. Proteção Inteligente com Folga para SCALP_BOOK (Dá espaço para buscar o Take Profit)
+                                if max_pnl_pct >= 0.42 and pnl_pct <= 0.18:
                                     exit_reason = f"MOMENTO_PASSOU_TOPO (Pico +{max_pnl_pct:.2f}% -> Protegido em +{pnl_pct:.2f}%)"
-                                # 3. Virada Brusca de Fluxo no Book + Tape (Paredão Vendedor + Despejo no Tape após 1.5 min)
-                                elif age_min >= 1.5 and live_buy_pct <= 40.0 and live_taker_pct <= 42.0:
-                                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Book Compra={live_buy_pct}% | Tape={live_taker_pct}%)"
-                                # 4. Expiração de Tempo (Estagnação sem força compradora após max_hold_minutes)
-                                elif age_min >= float(self.max_hold_minutes) and (live_buy_pct < 49.0 or live_taker_pct < 47.0):
-                                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f} min sem romper e fluxo fraco)"
+                                # 3. Virada Brusca de Fluxo no Book + Tape: apenas em despejo violento após pelo menos 4 minutos
+                                elif age_min >= 4.0 and live_buy_pct <= 30.0 and live_taker_pct <= 32.0:
+                                    exit_reason = f"MOMENTO_PASSOU_FLUXO_VIROU (Despejo Book={live_buy_pct:.0f}% | Tape={live_taker_pct:.0f}%)"
+                                # 4. Expiração de Tempo: apenas se ficar estagnado no negativo por mais de 25 minutos
+                                elif age_min >= max(20.0, float(self.max_hold_minutes)) and pnl_pct <= -0.15 and live_buy_pct < 42.0:
+                                    exit_reason = f"MOMENTO_PASSOU_TEMPO ({age_min:.1f}m estagnado no negativo)"
 
                         if exit_reason is not None:
                             try:

@@ -149,13 +149,35 @@ class SniperRuntimeState:
         self.ohlcv_cache: Dict[str, Dict[str, List[List[float]]]] = {}
         self.symbols_meta: Dict[str, Dict[str, Any]] = {}
         self.trades_history: Deque[Dict[str, Any]] = deque(maxlen=100)
-        self.execution_logs: Deque[Dict[str, Any]] = deque(maxlen=150)
+        self.audit_log_path: Path = Path(__file__).resolve().parent.parent / "audit_events.json"
+        self.execution_logs: Deque[Dict[str, Any]] = self._load_persisted_audit_logs()
 
         self.is_calibrating: bool = False
         self.last_calibration_utc: Optional[str] = None
         self.last_sniper_run_utc: Optional[str] = None
         self._dispatched_candles: Set[str] = set()
         self._calibration_task: Optional[asyncio.Task[Any]] = None
+
+    def _load_persisted_audit_logs(self) -> Deque[Dict[str, Any]]:
+        d: Deque[Dict[str, Any]] = deque(maxlen=500)
+        try:
+            if self.audit_log_path.exists():
+                items = json.loads(self.audit_log_path.read_text(encoding="utf-8"))
+                if isinstance(items, list):
+                    for it in reversed(items[:500]):
+                        d.appendleft(it)
+        except Exception as e:
+            logger.warning(f"Aviso ao carregar audit_events.json: {e}")
+        return d
+
+    def _save_persisted_audit_logs(self) -> None:
+        try:
+            self.audit_log_path.write_text(
+                json.dumps(list(self.execution_logs), indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.warning(f"Aviso ao persistir audit_events.json: {e}")
 
     def append_log(
         self,
@@ -170,6 +192,7 @@ class SniperRuntimeState:
             "details": details or {},
         }
         self.execution_logs.appendleft(entry)
+        self._save_persisted_audit_logs()
         logger.info(f"[{event_type}] {message}")
 
 
@@ -749,6 +772,14 @@ async def serve_dashboard() -> HTMLResponse:
     if DASHBOARD_HTML_PATH.exists():
         return HTMLResponse(content=DASHBOARD_HTML_PATH.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Quant Terminal Sniper Running</h1>")
+
+
+@app.get("/chart", response_class=HTMLResponse)
+async def serve_chart_popout() -> HTMLResponse:
+    p = Path(__file__).resolve().parent / "chart_popout.html"
+    if p.exists():
+        return HTMLResponse(content=p.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Chart Popout Page Not Found</h1>")
 
 
 @app.get("/manifest.json")

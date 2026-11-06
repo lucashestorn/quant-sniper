@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quant Sniper — Gráfico em Tempo Real</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <style>
+        body {
+            background-color: #070b14;
+            color: #e2e8f0;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow-x: hidden;
+        }
+        .card-glass {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(51, 65, 85, 0.7);
+            backdrop-filter: blur(10px);
+        }
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #070b14; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#060a12]">
+    <!-- BARRA SUPERIOR DA JANELA DESTACADA -->
+    <header class="p-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/95 sticky top-0 z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                <i data-lucide="candlestick-chart" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 id="popSymbol" class="text-base sm:text-lg font-black text-white mono">BTC/USDT</h1>
+                    <span id="popDirection" class="px-2 py-0.5 rounded text-[11px] font-black bg-emerald-950 text-emerald-400 border border-emerald-800">LONG</span>
+                    <span id="popModeBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">SNIPER</span>
+                    <span class="flex items-center gap-1 text-[11px] mono text-emerald-400 font-bold">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> AO VIVO
+                    </span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-300">
+                    <span id="popStrategyName" class="font-bold text-amber-300">Estratégia: ...</span>
+                    <span class="text-slate-600 hidden sm:inline">•</span>
+                    <span id="popStats" class="text-slate-400 mono text-[11px]">Win Rate: 0% | PF: 0.00</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Seletor Rápido de Timeframe -->
+            <div class="flex items-center gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800 text-[11px] mono">
+                <span class="text-slate-500 px-1 text-[10px] font-sans hidden sm:inline">TF:</span>
+                <button onclick="changeTf('1m')" id="btnTf1m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">1m</button>
+                <button onclick="changeTf('5m')" id="btnTf5m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">5m</button>
+                <button onclick="changeTf('15m')" id="btnTf15m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">15m</button>
+                <button onclick="changeTf('30m')" id="btnTf30m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">30m</button>
+                <button onclick="changeTf('1h')" id="btnTf1h" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">1h</button>
+                <button onclick="changeTf('4h')" id="btnTf4h" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400 hidden sm:inline">4h</button>
+            </div>
+
+            <!-- Botão de Disparo -->
+            <button id="btnAction" onclick="fireAction()"
+                class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shadow flex items-center gap-1.5 transition">
+                <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                <span id="btnActionLabel">Disparar Trade</span>
+            </button>
+
+            <!-- Link Binance -->
+            <a id="btnBinanceLink" href="#" target="_blank"
+                class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                title="Abrir par na Binance Spot">
+                <i data-lucide="external-link" class="w-4 h-4"></i>
+            </a>
+
+            <!-- Abrir Outro Ativo -->
+            <button onclick="promptNewSymbol()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold flex items-center gap-1 transition" title="Abrir outro ativo em nova janela">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span class="hidden sm:inline">Nova Moeda</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- FAIXA DE MÉTRICAS QUANTITATIVAS AO VIVO (BOOK + TAPE + WHALE SHIELD) -->
+    <div id="obStrip" class="px-4 py-2 bg-[#090d18] border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs mono">
+        <div class="flex items-center gap-3">
+            <span id="obDemand" class="text-emerald-400 font-bold">Demanda: Carregando...</span>
+            <span class="text-slate-600">|</span>
+            <span id="obTape" class="text-cyan-300 font-bold">Agressão Tape: --</span>
+            <span class="text-slate-600">|</span>
+            <span id="obRange" class="text-slate-300">Posição: --</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="obShield" class="text-emerald-300">🛡️ Escudo Baleia: --</span>
+            <span class="text-slate-600">|</span>
+            <span id="obTarget" class="text-amber-300">🎯 Alvo Líq: --</span>
+        </div>
+    </div>
+
+    <!-- CONTAINER DO GRÁFICO TRADINGVIEW -->
+    <div class="w-full bg-[#0c1322] border-b border-slate-800 relative h-[420px] sm:h-[480px]">
+        <div id="tradingview_popout_container" class="w-full h-full"></div>
+    </div>
+
+    <!-- PAINEL DIDÁTICO: O QUE SIGNIFICA A ESTRATÉGIA & MÉTRICAS USADAS PARA JULGAR O ATIVO -->
+    <main class="flex-1 p-4 max-w-7xl w-full mx-auto space-y-4">
+        <!-- Grade de Interpretação dos Indicadores -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- 1. Linha VWAP & Preço Justo -->
+            <div class="card-glass rounded-xl p-4 border border-blue-500/30">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="p-1.5 rounded-lg bg-blue-500/20 text-blue-400">
+                        <i data-lucide="line-chart" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="text-xs font-bold uppercase text-white tracking-wider" id="cardMetric1Title">Linha VWAP (Preço Ponderado por Volume)</h3>
+                </div>
+                <p class="text-xs text-slate-300 leading-relaxed" id="cardMetric1Desc">
+                    A <strong>VWAP</strong> representa o preço médio real pago pelas instituições na sessão. Quando o preço cai esticado abaixo da VWAP, o mercado entra em sobrevenda ("preço com desconto"). Comprar abaixo da VWAP busca a volta à média de valor justo.
+                </p>
+                <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                    <span class="text-slate-400">Status VWAP:</span>
+                    <span id="valVwapStatus" class="font-bold text-cyan-300">Desconto / Buscando Reversão</span>
+                </div>
+            </div>
+
+            <!-- 2. Exaustão & Reversão Bullish -->
+            <div class="card-glass rounded-xl p-4 border border-emerald-500/30">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                        <i data-lucide="zap" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="text-xs font-bold uppercase text-white tracking-wider" id="cardMetric2Title">Exaustão Vendedora vs Reversão</h3>
+                </div>
+                <p class="text-xs text-slate-300 leading-relaxed" id="cardMetric2Desc">
+                    <strong>Exaustão:</strong> Vendedores tentam empurrar novas mínimas, mas o preço não cai mais porque baleias absorvem as vendas passivamente nos Bids.<br>
+                    <strong>Reversão Bullish:</strong> A demanda compradora reage, o Tape fica verde e supera a média rápida (EMA 9), iniciando o rali até o alvo.
+                </p>
+                <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                    <span class="text-slate-400">Gatilho de Força:</span>
+                    <span id="valTriggerStatus" class="font-bold text-emerald-400">Absorção Concluída</span>
+                </div>
+            </div>
+
+            <!-- 3. Escudo de Baleia & Relação Risco/Retorno -->
+            <div class="card-glass rounded-xl p-4 border border-amber-500/30">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+                        <i data-lucide="shield" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="text-xs font-bold uppercase text-white tracking-wider" id="cardMetric3Title">Escudo de Baleia & Posição no Range</h3>
+                </div>
+                <p class="text-xs text-slate-300 leading-relaxed" id="cardMetric3Desc">
+                    <strong>Escudo da Baleia:</strong> Uma muralha com centenas de milhares de dólares em ordens passivas de compra. Seu Stop Loss fica estruturado 0.10% atrás dela.<br>
+                    <strong>Posição no Range:</strong> Garante que você compre no fundo do movimento (&le; 40%) e nunca no topo esticado.
+                </p>
+                <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-xs mono">
+                    <span class="text-slate-400">Proteção de Stop:</span>
+                    <span id="valStopStatus" class="font-bold text-amber-300">🛡️ Blindado atrás da Baleia</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dicionário Rápido das Fórmulas Matemáticas do Robô -->
+        <div class="card-glass rounded-xl p-4 border border-slate-800 bg-slate-900/40 text-xs">
+            <h4 class="font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-2">
+                <i data-lucide="book-open" class="w-4 h-4 text-purple-400"></i>
+                Como o algoritmo avalia e julga este ativo:
+            </h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-slate-300">
+                <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <span class="text-emerald-400 font-bold block mb-1">1. Demanda L2 &ge; 58%</span>
+                    <span>O Livro de Ofertas mede 100 níveis de profundidade a 0.85% de distância. Só compra se houver muito mais compradores que vendedores.</span>
+                </div>
+                <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <span class="text-cyan-400 font-bold block mb-1">2. Agressão Tape 1m</span>
+                    <span>Volume real de compras a mercado (Taker Buy) deve superar 51% sem esticar em euforia tardia.</span>
+                </div>
+                <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <span class="text-amber-400 font-bold block mb-1">3. Preço Barato no Fundo</span>
+                    <span>Calcula <code class="text-amber-300">range_position</code> das últimas 15 velas. Bloqueia compras acima de 70% (topo) para evitar armadilhas de alta.</span>
+                </div>
+                <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <span class="text-purple-400 font-bold block mb-1">4. Assimetria R:R Mínima</span>
+                    <span>Garante que o Take Profit pretendido pague pelo menos 1.5x a 2.0x o risco do Stop Loss já descontando as taxas de corretagem (0.11%).</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        let curSymbol = params.get('symbol') || 'BTC/USDT';
+        let curTf = params.get('tf') || '15m';
+        let curMode = params.get('mode') || 'SNIPER';
+        let curStrat = params.get('strat') || 'Exaustão / Reversão VWAP Bullish';
+        let curWinRate = params.get('wr') || '75';
+        let curPf = params.get('pf') || '2.40';
+
+        document.getElementById('popSymbol').innerText = curSymbol;
+        document.getElementById('popStrategyName').innerText = `Estratégia: ${curStrat}`;
+        document.getElementById('popStats').innerText = `Win Rate: ${curWinRate}% | PF: ${curPf}`;
+        document.title = `${curSymbol} (${curTf}) — Quant Sniper Real-Time`;
+
+        const cleanSym = curSymbol.split(':')[0].replace('/', '_');
+        document.getElementById('btnBinanceLink').href = `https://www.binance.com/pt-BR/trade/${cleanSym}`;
+
+        function updateTfButtons(activeTf) {
+            const tfs = ['1m', '5m', '15m', '30m', '1h', '4h'];
+            tfs.forEach(tf => {
+                const b = document.getElementById('btnTf' + tf);
+                if (b) {
+                    if (tf === activeTf) {
+                        b.className = 'px-2 py-0.5 rounded font-black bg-blue-600 text-white shadow';
+                    } else {
+                        b.className = 'px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400';
+                    }
+                }
+            });
+        }
+
+        function renderChart(symbol, tf) {
+            const container = document.getElementById('tradingview_popout_container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const clean = symbol.split(':')[0].replace('/', '').toUpperCase();
+            const tvSymbol = 'BINANCE:' + clean;
+
+            let interval = '15';
+            if (tf === '1m') interval = '1';
+            else if (tf === '5m') interval = '5';
+            else if (tf === '15m') interval = '15';
+            else if (tf === '30m') interval = '30';
+            else if (tf === '1h') interval = '60';
+            else if (tf === '4h') interval = '240';
+
+            try {
+                if (typeof TradingView !== 'undefined' && TradingView.widget) {
+                    new TradingView.widget({
+                        "autosize": true,
+                        "symbol": tvSymbol,
+                        "interval": interval,
+                        "timezone": "America/Sao_Paulo",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "br",
+                        "toolbar_bg": "#0c1322",
+                        "enable_publishing": false,
+                        "allow_symbol_change": true,
+                        "save_image": false,
+                        "container_id": "tradingview_popout_container",
+                        "backgroundColor": "#0c1322",
+                        "gridColor": "rgba(30, 41, 59, 0.4)",
+                        "details": false,
+                        "hotlist": false,
+                        "calendar": false,
+                        "studies": [
+                            "VWAP@tv-basicstudies",
+                            "MASimple@tv-basicstudies"
+                        ]
+                    });
+                    return;
+                }
+            } catch (e) {
+                console.warn(e);
+            }
+
+            container.innerHTML = `
+                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${interval}&theme=dark&style=1&locale=br"
+                    style="width: 100%; height: 100%; border: none;"></iframe>
+            `;
+        }
+
+        function changeTf(tf) {
+            curTf = tf;
+            updateTfButtons(tf);
+            renderChart(curSymbol, tf);
+        }
+
+        function promptNewSymbol() {
+            const sym = prompt('Digite o símbolo para abrir (ex: SOL/USDT, ETH/USDT, PEPE/USDT):', 'SOL/USDT');
+            if (sym && sym.trim()) {
+                const target = sym.trim().toUpperCase();
+                const url = `/chart?symbol=${encodeURIComponent(target)}&tf=${curTf}&mode=${curMode}`;
+                window.open(url, '_blank', 'width=1180,height=820,resizable=yes');
+            }
+        }
+
+        async function fetchLiveMetrics() {
+            try {
+                const res = await fetch('/api/orderbook-scalp');
+                if (!res.ok) return;
+                const data = await res.json();
+                const opps = data.opportunities || [];
+                const item = opps.find(x => x.symbol === curSymbol);
+                if (item) {
+                    const buyPct = Number(item.buy_pressure_pct || 50).toFixed(1);
+                    const sellPct = Number(item.sell_pressure_pct || 50).toFixed(1);
+                    const takerPct = Number(item.taker_buy_pct || 50).toFixed(1);
+                    const rPos = Number(item.range_position_pct || 50).toFixed(0);
+
+                    document.getElementById('obDemand').innerHTML = `Demanda: <strong class="text-emerald-400">${buyPct}% Compra</strong> vs <strong class="text-rose-400">${sellPct}%</strong>`;
+                    document.getElementById('obTape').innerHTML = `Agressão Tape: <strong class="${takerPct >= 52 ? 'text-emerald-400' : 'text-slate-300'}">${takerPct}%</strong>`;
+                    document.getElementById('obRange').innerHTML = `Posição: <strong class="${rPos <= 42 ? 'text-emerald-400' : rPos >= 75 ? 'text-rose-400' : 'text-slate-300'}">${rPos <= 42 ? '🟢 Fundo Barato' : rPos >= 75 ? '🔴 Topo Esticado' : 'Meio'} (${rPos}%)</strong>`;
+                    document.getElementById('obShield').innerHTML = `🛡️ Escudo Baleia: <strong class="text-emerald-300">$${item.bid_wall_price}</strong>`;
+                    document.getElementById('obTarget').innerHTML = `🎯 Alvo Líq: <strong class="text-amber-300">+${item.net_target_pct}%</strong> (Risco: -${item.risk_pct}%)`;
+                }
+            } catch (e) {
+                // Silencioso
+            }
+        }
+
+        async function fireAction() {
+            if (!confirm(`Deseja disparar ordem para ${curSymbol} agora?`)) return;
+            try {
+                const res = await fetch('/api/trigger', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: curSymbol, timeframe: curTf, direction: 'LONG' })
+                });
+                const ret = await res.json();
+                if (ret.status === 'ok') {
+                    alert(`✓ Ordem disparada com sucesso para ${curSymbol}!`);
+                } else {
+                    alert(`Aviso: ${ret.message || 'Verifique o saldo livre da Binance'}`);
+                }
+            } catch (e) {
+                alert('Erro ao disparar: ' + e);
+            }
+        }
+
+        // Inicialização
+        updateTfButtons(curTf);
+        renderChart(curSymbol, curTf);
+        fetchLiveMetrics();
+        setInterval(fetchLiveMetrics, 4000);
+        if (window.lucide) window.lucide.createIcons();
+    </script>
+</body>
+</html>

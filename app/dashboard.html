@@ -728,17 +728,42 @@
                     </div>
                 </section>
 
-                <!-- Console de Logs em Tempo Real (1/3 width) -->
+                <!-- Console de Logs e Auditoria em Tempo Real com Filtros e Exportação (1/3 width) -->
                 <section class="card-glass rounded-xl p-4 flex flex-col">
-                    <div class="flex items-center justify-between mb-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <div class="flex items-center gap-2">
                             <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i>
                             <h3 class="text-xs font-bold uppercase tracking-wider text-white">Eventos & Auditoria do Sniper</h3>
                         </div>
-                        <span class="text-[10px] mono text-emerald-400 flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> LIVE
-                        </span>
+                        <div class="flex items-center gap-2">
+                            <span id="logsCounterBadge" class="text-[10px] mono text-slate-400 font-bold">0 eventos</span>
+                            <span class="text-[10px] mono text-emerald-400 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> LIVE
+                            </span>
+                        </div>
                     </div>
+
+                    <!-- Barra de Filtros e Busca de Eventos -->
+                    <div class="mb-2.5 space-y-1.5">
+                        <div class="flex items-center gap-1.5">
+                            <input type="text" id="inputSearchLogs" placeholder="Buscar símbolo ou texto (ex: BTC, SHIB, STOP)..."
+                                oninput="applyLogsFilter()"
+                                class="flex-1 px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-[11px] text-white focus:outline-none focus:border-blue-500 mono" />
+                            <button onclick="downloadAuditLogsJson()" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold border border-slate-700 transition" title="Baixar arquivo JSON com histórico de auditoria">
+                                📥 JSON
+                            </button>
+                        </div>
+                        <!-- Pílulas de filtro rápido -->
+                        <div class="flex flex-wrap items-center gap-1 text-[10px] font-semibold">
+                            <button onclick="setLogsCategoryFilter('ALL')" id="pillLogAll" class="px-2 py-0.5 rounded bg-blue-600 text-white font-bold">Todos</button>
+                            <button onclick="setLogsCategoryFilter('BUY')" id="pillLogBuy" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700">🟢 Compras</button>
+                            <button onclick="setLogsCategoryFilter('SELL')" id="pillLogSell" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700">🔴 Vendas</button>
+                            <button onclick="setLogsCategoryFilter('SCALP')" id="pillLogScalp" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700">⚡ Scalp</button>
+                            <button onclick="setLogsCategoryFilter('SNIPER')" id="pillLogSniper" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700">🎯 Sniper</button>
+                            <button onclick="setLogsCategoryFilter('ERROR')" id="pillLogError" class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700">⚠️ Alertas</button>
+                        </div>
+                    </div>
+
                     <div id="logsContainer" class="flex-1 max-h-[420px] overflow-y-auto space-y-2 pr-1 mono text-[11px]">
                         <div class="text-slate-500 text-center py-8">Sincronizando logs...</div>
                     </div>
@@ -1241,10 +1266,10 @@
     </div>
 
     <!-- MODAL DE GRÁFICO EM TEMPO REAL & ESTRATÉGIA VENCEDORA -->
-    <div id="liveChartModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden items-center justify-center p-2 sm:p-4 transition-all">
-        <div class="card-glass rounded-2xl w-full max-w-6xl max-h-[96vh] flex flex-col border border-slate-700 shadow-2xl overflow-hidden bg-[#0a0f1d]">
-            <!-- Header do Modal -->
-            <div class="p-3 sm:p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/90">
+    <div id="liveChartModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden items-center justify-center p-2 sm:p-4 transition-all">
+        <div id="liveChartModalCard" class="card-glass rounded-2xl w-full max-w-6xl max-h-[96vh] flex flex-col border border-slate-700 shadow-2xl overflow-hidden bg-[#0a0f1d] transition-all">
+            <!-- Header do Modal (Arrastável / Draggable) -->
+            <div id="liveChartModalHeader" class="p-3 sm:p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/95 cursor-move select-none">
                 <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
                         <i data-lucide="candlestick-chart" class="w-5 h-5"></i>
@@ -1259,7 +1284,7 @@
                             </span>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-300">
-                            <span id="modalChartStrategyName" class="font-bold text-amber-300">Estratégia Vencedora: ...</span>
+                            <span id="modalChartStrategyName" class="font-bold text-amber-300">Estratégia: ...</span>
                             <span class="text-slate-600 hidden sm:inline">•</span>
                             <span id="modalChartStats" class="text-slate-400 mono text-[11px]">Win Rate: 0% | PF: 0.00 | Lucro: +0%</span>
                         </div>
@@ -1267,7 +1292,7 @@
                 </div>
 
                 <div class="flex items-center gap-2">
-                    <!-- Seletor Rápido de Timeframe dentro do Modal -->
+                    <!-- Seletor Rápido de Timeframe -->
                     <div class="flex items-center gap-1 p-1 bg-slate-950/80 rounded-lg border border-slate-800 text-[11px] mono">
                         <span class="text-slate-500 px-1 text-[10px] font-sans hidden sm:inline">TF:</span>
                         <button onclick="switchModalTimeframe('1m')" id="btnModalTf1m" class="px-2 py-0.5 rounded font-bold hover:bg-slate-800 text-slate-400">1m</button>
@@ -1285,11 +1310,26 @@
                         <span id="btnModalTriggerActionLabel">Disparar Scalp ($9.50)</span>
                     </button>
 
+                    <!-- Botão Destacar em Janela Separada (Pop-out / Abrir Vários) -->
+                    <button onclick="popoutChartWindow()"
+                        class="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow transition"
+                        title="Destacar Gráfico em Janela Separada (permite abrir vários e mover entre telas)">
+                        <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                        <span class="hidden sm:inline">Destacar Janela</span>
+                    </button>
+
                     <a id="btnModalBinanceLink" href="#" target="_blank"
                         class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
                         title="Ver na Binance Spot">
-                        <i data-lucide="external-link" class="w-4 h-4"></i>
+                        <i data-lucide="globe" class="w-4 h-4"></i>
                     </a>
+
+                    <!-- Maximizar / Restaurar -->
+                    <button onclick="toggleModalMaximize()" id="btnModalMaximize"
+                        class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                        title="Maximizar / Restaurar Janela">
+                        <i data-lucide="maximize-2" class="w-4 h-4"></i>
+                    </button>
 
                     <button onclick="closeLiveChartModal()" class="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900 text-slate-400 hover:text-white border border-slate-700 transition" title="Fechar (ESC)">
                         <i data-lucide="x" class="w-5 h-5"></i>
@@ -1313,9 +1353,60 @@
                 </div>
             </div>
 
-            <!-- Container do Gráfico TradingView -->
-            <div class="flex-1 w-full bg-[#0c1322] relative min-h-[460px] sm:min-h-[520px]">
-                <div id="tradingview_chart_container" class="w-full h-full min-h-[460px] sm:min-h-[520px]"></div>
+            <!-- Área Central com Scroll: Gráfico + Seção Didática da Estratégia em Baixo -->
+            <div class="flex-1 overflow-y-auto">
+                <!-- Container do Gráfico TradingView -->
+                <div class="w-full bg-[#0c1322] relative h-[380px] sm:h-[430px] border-b border-slate-800">
+                    <div id="tradingview_chart_container" class="w-full h-full"></div>
+                </div>
+
+                <!-- PAINEL DIDÁTICO: O QUE SIGNIFICA A ESTRATÉGIA E AS MÉTRICAS ATIVAS -->
+                <div class="p-4 bg-slate-900/70 space-y-3.5">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="sparkles" class="w-4 h-4 text-amber-400"></i>
+                            <h4 class="text-xs font-black uppercase tracking-wider text-white">
+                                Anatomia da Estratégia Vencedora & Métricas Julgadas Ativas
+                            </h4>
+                        </div>
+                        <span class="text-[11px] mono text-cyan-300 font-semibold" id="modalActiveIndicatorBadge">VWAP + Médias Institucionais Ativas</span>
+                    </div>
+
+                    <!-- Cards Didáticos da Estratégia Atual -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div class="p-3 rounded-xl bg-slate-950/80 border border-blue-500/30 space-y-1">
+                            <div class="text-[10px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1">
+                                <i data-lucide="line-chart" class="w-3.5 h-3.5"></i>
+                                <span id="didacticTitle1">Linha VWAP (Preço Justo)</span>
+                            </div>
+                            <p class="text-xs text-slate-200" id="didacticDesc1">
+                                Preço médio ponderado por volume. Quando estica para baixo da VWAP, o mercado entra em 'desconto excessivo' institucional.
+                            </p>
+                        </div>
+
+                        <div class="p-3 rounded-xl bg-slate-950/80 border border-emerald-500/30 space-y-1">
+                            <div class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                                <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                                <span id="didacticTitle2">Exaustão vs Reversão</span>
+                            </div>
+                            <p class="text-xs text-slate-200" id="didacticDesc2">
+                                <strong>Exaustão:</strong> Vendedores perdem força no fundo e são absorvidos.<br>
+                                <strong>Reversão Bullish:</strong> Compradores retomam o controle e empurram o preço de volta à média rápida.
+                            </p>
+                        </div>
+
+                        <div class="p-3 rounded-xl bg-slate-950/80 border border-amber-500/30 space-y-1">
+                            <div class="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                                <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+                                <span id="didacticTitle3">Escudo Baleia & Fundo</span>
+                            </div>
+                            <p class="text-xs text-slate-200" id="didacticDesc3">
+                                <strong>Escudo da Baleia:</strong> Paredão de centenas de milhares de dólares nos Bids que serve de chão para o Stop Loss.<br>
+                                <strong>Posição no Range:</strong> Garante compra barata no fundo (&le; 40%) e nunca no topo.
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1393,10 +1484,126 @@
             }
 
             updateModalOrderbookStrip(symbol);
+            updateModalDidactics(strategyName, symbol, currentModalTimeframe);
             renderTradingViewWidget(symbol, currentModalTimeframe);
             updateModalTfButtons(currentModalTimeframe);
+            makeModalDraggable();
 
             if (window.lucide) window.lucide.createIcons();
+        }
+
+        function updateModalDidactics(strategyName, symbol, tf) {
+            const s = (strategyName || '').toLowerCase();
+            const badgeEl = document.getElementById('modalActiveIndicatorBadge');
+            const title1 = document.getElementById('didacticTitle1');
+            const desc1 = document.getElementById('didacticDesc1');
+            const title2 = document.getElementById('didacticTitle2');
+            const desc2 = document.getElementById('didacticDesc2');
+            const title3 = document.getElementById('didacticTitle3');
+            const desc3 = document.getElementById('didacticDesc3');
+
+            if (s.includes('vwap') || s.includes('exaustão') || s.includes('reversão')) {
+                if (badgeEl) badgeEl.innerText = "VWAP + Média Rápida 9 Ativas";
+                if (title1) title1.innerText = "Linha VWAP (Preço Justo da Sessão)";
+                if (desc1) desc1.innerHTML = "A <strong>VWAP</strong> representa o preço médio real ponderado pelo volume institucional da sessão. Quando o preço estica muito abaixo dela, o mercado entra em 'desconto excessivo'.";
+                if (title2) title2.innerText = "Exaustão Vendedora vs Reversão";
+                if (desc2) desc2.innerHTML = "<strong>Exaustão:</strong> Vendedores tentam empurrar novas mínimas, mas o book absorve passivamente nos Bids e o preço para de cair.<br><strong>Reversão Bullish:</strong> Compradores retomam controle e cruzam a média rápida de volta em direção à VWAP.";
+                if (title3) title3.innerText = "Escudo Baleia & Fundo Barato";
+                if (desc3) desc3.innerHTML = "<strong>Escudo da Baleia:</strong> Muralha de compra nos Bids que serve de chão para travar o Stop Loss.<br><strong>Posição no Range:</strong> Garante compra no fundo (&le; 40%) e nunca no topo.";
+            } else if (s.includes('spring') || s.includes('precisão')) {
+                if (badgeEl) badgeEl.innerText = "Spring Wyckoff + Absorção de Volume";
+                if (title1) title1.innerText = "Spring (Mola de Wyckoff)";
+                if (desc1) desc1.innerHTML = "Uma falsa perda de suporte recente para 'estopar sardinhas' e capturar liquidez de quem opera vendido no pânico.";
+                if (title2) title2.innerText = "Absorção Institucional";
+                if (desc2) desc2.innerHTML = "Baleias engolem todas as vendas a mercado no fundo. O candle fecha com pavio inferior longo e volta imediatamente para dentro do canal.";
+                if (title3) title3.innerText = "Disparo Rápido com Risco Mínimo";
+                if (desc3) desc3.innerHTML = "Stop colado logo abaixo da ponta do pavio do Spring, oferecendo relação de ganho assimétrica de 1:2.0 a 1:2.5.";
+            } else if (s.includes('pullback') || s.includes('ema')) {
+                if (badgeEl) badgeEl.innerText = "Tendência EMA 9 & EMA 21 Ativas";
+                if (title1) title1.innerText = "Médias Exponenciais Rápidas";
+                if (desc1) desc1.innerHTML = "A EMA 9 acima da EMA 21 define a tendência primária de alta saudável.";
+                if (title2) title2.innerText = "Pullback Saudável";
+                if (desc2) desc2.innerHTML = "O preço corrige temporariamente até a média sem quebrar a estrutura compradora. É o descanso do preço para buscar novas máximas.";
+                if (title3) title3.innerText = "Gatilho de Rejeição";
+                if (desc3) desc3.innerHTML = "Candle verde rejeita a média e retoma agressão compradora no Tape, disparando a entrada a favor da tendência.";
+            } else {
+                if (badgeEl) badgeEl.innerText = "Order Book Depth 100 + Tape 1m";
+                if (title1) title1.innerText = "Demanda do Livro (Bids vs Asks)";
+                if (desc1) desc1.innerHTML = "Mede 100 níveis a 0.85% de profundidade. Exige no mínimo 60-64% de pressão compradora institucional.";
+                if (title2) title2.innerText = "Agressão Tape 1m (Taker Buy)";
+                if (desc2) desc2.innerHTML = "Percentual de ordens de mercado batendo na venda. Mais de 51% confirma fluxo ativo empurrando o preço.";
+                if (title3) title3.innerText = "Escudo Baleia & Stop Blindado";
+                if (desc3) desc3.innerHTML = "Stop estruturado 0.10% atrás do maior paredão comprador, evitando violinadas de ruído.";
+            }
+        }
+
+        function popoutChartWindow() {
+            const clean = currentModalSymbol.split(':')[0].replace('/', '_');
+            const strat = encodeURIComponent(currentModalContext.strategyName || 'Exaustão / Reversão VWAP Bullish');
+            const url = `/chart?symbol=${encodeURIComponent(currentModalSymbol)}&tf=${currentModalTimeframe}&mode=${currentModalContext.origin || 'sniper'}&strat=${strat}&wr=${currentModalContext.winRate || '75'}&pf=${currentModalContext.pf || '2.4'}`;
+            window.open(url, 'Chart_' + clean + '_' + Date.now(), 'width=1180,height=820,resizable=yes');
+        }
+
+        let isModalMaximized = false;
+        function toggleModalMaximize() {
+            const card = document.getElementById('liveChartModalCard');
+            const btn = document.getElementById('btnModalMaximize');
+            if (!card) return;
+            isModalMaximized = !isModalMaximized;
+            if (isModalMaximized) {
+                card.classList.remove('max-w-6xl', 'rounded-2xl');
+                card.classList.add('max-w-full', 'w-screen', 'h-screen', 'max-h-screen', 'rounded-none');
+                if (btn) btn.innerHTML = '<i data-lucide="minimize-2" class="w-4 h-4"></i>';
+            } else {
+                card.classList.add('max-w-6xl', 'rounded-2xl');
+                card.classList.remove('max-w-full', 'w-screen', 'h-screen', 'max-h-screen', 'rounded-none');
+                card.style.left = '';
+                card.style.top = '';
+                card.style.position = '';
+                card.style.margin = '';
+                if (btn) btn.innerHTML = '<i data-lucide="maximize-2" class="w-4 h-4"></i>';
+            }
+            if (window.lucide) window.lucide.createIcons();
+        }
+
+        function makeModalDraggable() {
+            const modal = document.getElementById('liveChartModalCard');
+            const header = document.getElementById('liveChartModalHeader');
+            if (!modal || !header || modal._hasDraggable) return;
+            modal._hasDraggable = true;
+
+            let isDragging = false;
+            let startX, startY, initialX, initialY;
+
+            header.onmousedown = function (e) {
+                if (isModalMaximized) return;
+                if (e.target.closest('button') || e.target.closest('a') || e.target.closest('input')) return;
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                const rect = modal.getBoundingClientRect();
+                initialX = rect.left;
+                initialY = rect.top;
+
+                modal.style.position = 'fixed';
+                modal.style.left = initialX + 'px';
+                modal.style.top = initialY + 'px';
+                modal.style.margin = '0';
+
+                document.onmousemove = function (e) {
+                    if (!isDragging) return;
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    modal.style.left = Math.max(10, Math.min(window.innerWidth - 300, initialX + dx)) + 'px';
+                    modal.style.top = Math.max(10, Math.min(window.innerHeight - 150, initialY + dy)) + 'px';
+                };
+
+                document.onmouseup = function () {
+                    isDragging = false;
+                    document.onmousemove = null;
+                    document.onmouseup = null;
+                };
+            };
         }
 
         function updateModalOrderbookStrip(symbol) {
@@ -1452,7 +1659,11 @@
                         "gridColor": "rgba(30, 41, 59, 0.4)",
                         "details": false,
                         "hotlist": false,
-                        "calendar": false
+                        "calendar": false,
+                        "studies": [
+                            "VWAP@tv-basicstudies",
+                            "MASimple@tv-basicstudies"
+                        ]
                     });
                     return;
                 }
@@ -2280,34 +2491,127 @@
                 }).join('');
             }
 
-            // Render Execution Logs
-            const logs = data.execution_logs || [];
-            const logsEl = document.getElementById('logsContainer');
-            if (logs.length === 0) {
-                logsEl.innerHTML = `<div class="text-slate-500 text-center py-6">Nenhum evento registrado.</div>`;
-            } else {
-                logsEl.innerHTML = logs.map(l => {
-                    let badgeColor = 'text-blue-400 bg-blue-950/60 border-blue-800/60';
-                    if (l.event_type.includes('ORDER_FIRED')) badgeColor = 'text-emerald-300 bg-emerald-950 border-emerald-700';
-                    else if (l.event_type.includes('ERROR') || l.event_type.includes('FAILED')) badgeColor = 'text-rose-300 bg-rose-950 border-rose-800';
-                    else if (l.event_type.includes('CALIBRATION_DONE')) badgeColor = 'text-amber-300 bg-amber-950/70 border-amber-800';
-                    return `
-                        <div class="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/80 space-y-1">
-                            <div class="flex items-center justify-between">
-                                <span class="px-1.5 py-0.2 rounded border text-[10px] font-bold ${badgeColor}">${l.event_type}</span>
-                                <span class="text-[10px] text-slate-500">${l.timestamp_utc}</span>
-                            </div>
-                            <p class="text-slate-300 leading-snug font-sans text-xs">${l.message}</p>
-                        </div>
-                    `;
-                }).join('');
-            }
+            // Render Execution Logs com Suporte a Filtros e Pesquisa
+            cachedExecutionLogs = data.execution_logs || [];
+            applyLogsFilter();
 
             // Atualiza Gráficos & Linha do Saldo
             updateChartsView(data);
 
             // Atualiza Janelas Institucionais (China & EUA)
             renderSessionView(data);
+        }
+
+        let currentLogsCategory = 'ALL';
+        let cachedExecutionLogs = [];
+
+        function setLogsCategoryFilter(category) {
+            currentLogsCategory = category;
+            const pills = {
+                'ALL': 'pillLogAll',
+                'BUY': 'pillLogBuy',
+                'SELL': 'pillLogSell',
+                'SCALP': 'pillLogScalp',
+                'SNIPER': 'pillLogSniper',
+                'ERROR': 'pillLogError'
+            };
+            Object.keys(pills).forEach(k => {
+                const el = document.getElementById(pills[k]);
+                if (!el) return;
+                if (k === category) {
+                    el.className = 'px-2 py-0.5 rounded bg-blue-600 text-white font-bold transition';
+                } else {
+                    el.className = 'px-2 py-0.5 rounded bg-slate-800 text-slate-400 hover:bg-slate-700 transition';
+                }
+            });
+            applyLogsFilter();
+        }
+
+        function applyLogsFilter() {
+            const input = document.getElementById('inputSearchLogs');
+            const query = (input ? input.value : '').trim().toLowerCase();
+            const logsEl = document.getElementById('logsContainer');
+            if (!logsEl) return;
+
+            let filtered = cachedExecutionLogs.slice();
+
+            // Filtro por Categoria
+            if (currentLogsCategory === 'BUY') {
+                filtered = filtered.filter(l => {
+                    const txt = ((l.event_type || '') + ' ' + (l.message || '')).toLowerCase();
+                    return txt.includes('compra') || txt.includes('buy') || txt.includes('entrada') || txt.includes('order_fired_buy') || txt.includes('long');
+                });
+            } else if (currentLogsCategory === 'SELL') {
+                filtered = filtered.filter(l => {
+                    const txt = ((l.event_type || '') + ' ' + (l.message || '')).toLowerCase();
+                    return txt.includes('venda') || txt.includes('sell') || txt.includes('saída') || txt.includes('saida') || txt.includes('tp') || txt.includes('stop') || txt.includes('close');
+                });
+            } else if (currentLogsCategory === 'SCALP') {
+                filtered = filtered.filter(l => {
+                    const txt = ((l.event_type || '') + ' ' + (l.message || '')).toLowerCase();
+                    return txt.includes('scalp');
+                });
+            } else if (currentLogsCategory === 'SNIPER') {
+                filtered = filtered.filter(l => {
+                    const txt = ((l.event_type || '') + ' ' + (l.message || '')).toLowerCase();
+                    return txt.includes('sniper') || txt.includes('calibr');
+                });
+            } else if (currentLogsCategory === 'ERROR') {
+                filtered = filtered.filter(l => {
+                    const ev = (l.event_type || '').toUpperCase();
+                    const msg = (l.message || '').toUpperCase();
+                    return ev.includes('ERROR') || ev.includes('FAIL') || ev.includes('WARN') || msg.includes('ERRO') || msg.includes('AVISO');
+                });
+            }
+
+            // Filtro por Texto / Busca
+            if (query) {
+                filtered = filtered.filter(l => {
+                    const haystack = ((l.event_type || '') + ' ' + (l.message || '') + ' ' + (l.timestamp_utc || '')).toLowerCase();
+                    return haystack.includes(query);
+                });
+            }
+
+            if (filtered.length === 0) {
+                logsEl.innerHTML = `<div class="text-slate-500 text-center py-6">Nenhum evento encontrado para o filtro atual.</div>`;
+                return;
+            }
+
+            logsEl.innerHTML = filtered.map(l => {
+                let badgeColor = 'text-blue-400 bg-blue-950/60 border-blue-800/60';
+                const ev = (l.event_type || '').toUpperCase();
+                if (ev.includes('ORDER_FIRED') || ev.includes('BUY') || ev.includes('COMPRA')) {
+                    badgeColor = 'text-emerald-300 bg-emerald-950 border-emerald-700';
+                } else if (ev.includes('SELL') || ev.includes('VENDA') || ev.includes('CLOSE') || ev.includes('TP') || ev.includes('STOP')) {
+                    badgeColor = 'text-amber-300 bg-amber-950 border-amber-700';
+                } else if (ev.includes('ERROR') || ev.includes('FAILED')) {
+                    badgeColor = 'text-rose-300 bg-rose-950 border-rose-800';
+                } else if (ev.includes('CALIBRATION_DONE')) {
+                    badgeColor = 'text-purple-300 bg-purple-950/70 border-purple-800';
+                }
+                return `
+                    <div class="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/80 space-y-1 hover:border-slate-700 transition">
+                        <div class="flex items-center justify-between">
+                            <span class="px-1.5 py-0.2 rounded border text-[10px] font-bold ${badgeColor}">${l.event_type || 'EVENTO'}</span>
+                            <span class="text-[10px] text-slate-500">${l.timestamp_utc || ''}</span>
+                        </div>
+                        <p class="text-slate-300 leading-snug font-sans text-xs">${l.message || ''}</p>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function downloadAuditLogsJson() {
+            if (!cachedExecutionLogs || cachedExecutionLogs.length === 0) {
+                showToast('Nenhum log para exportar no momento.', 'warning');
+                return;
+            }
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(cachedExecutionLogs, null, 2));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `sniper_audit_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+            dlAnchorElem.click();
+            showToast('Histórico de auditoria baixado com sucesso!', 'success');
         }
 
         function renderSessionView(data) {
