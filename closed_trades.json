@@ -112,5 +112,24 @@
     "pnl_pct": 0.07,
     "duration_minutes": 7.6,
     "reason": "MOMENTO_PASSOU_FLUXO_VIROU (Book Compra=19.4% | Tape=42.0%)"
+  },
+  {
+    "id": "CLSD-1793931828916",
+    "timestamp_utc": "2026-11-06 02:23:48 UTC",
+    "timestamp_ts": 1793931828.9161117,
+    "time_label": "02:23",
+    "symbol": "UNI/USDT",
+    "mode": "SCALP_BOOK",
+    "timeframe": "BOOK-L2",
+    "horizon": "Minutos (~1 a 12m)",
+    "direction": "LONG",
+    "entry_price": 6.963,
+    "exit_price": 6.978,
+    "sold_qty": 0.78,
+    "received_usdt": 5.44,
+    "realized_pnl": 0.01,
+    "pnl_pct": 0.22,
+    "duration_minutes": 6.2,
+    "reason": "MOMENTO_PASSOU_TOPO (Pico +0.36% -> Protegido em +0.20%)"
   }
 ]

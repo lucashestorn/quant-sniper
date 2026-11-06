@@ -434,6 +434,33 @@
                     </div>
                 </div>
 
+                <!-- BANNER POOLING: USAR DINHEIRO PARADO EM SCALPS PROMISSORES -->
+                <div class="mt-3 p-3 rounded-xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-amber-950/30 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-2 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-xs font-black uppercase text-white">
+                                    Usar Dinheiro Parado em Scalps Promissores (Empréstimo Dinâmico de Saldo)
+                                </h3>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-900/80 text-emerald-300 border border-emerald-600" id="badgeIdleBorrowState">ATIVO (POOLED)</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400">
+                                Enquanto o Sniper (1h/15m) ou Rocket Memes estiverem aguardando sinais, o robô <strong>não deixa o dinheiro parado</strong>: libera as vagas ociosas para pegar oportunidades no Order Book!
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleIdleCapitalBorrow()" id="btnToggleIdleBorrow"
+                            class="px-3.5 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-2 transition shadow bg-emerald-500 hover:bg-emerald-400 text-black">
+                            <i data-lucide="check-circle" class="w-4 h-4"></i>
+                            <span id="btnToggleIdleBorrowText">Saldo Parado em Scalp: LIGADO</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- GRADE DAS 3 MODALIDADES -->
                 <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                     <!-- 1. MODALIDADE SCALP -->
@@ -1310,6 +1337,22 @@
             updateAllocationSummary();
         }
 
+        async function toggleIdleCapitalBorrow() {
+            const cur = Boolean(currentStatus && currentStatus.allow_scalp_borrow_idle_capital !== undefined ? currentStatus.allow_scalp_borrow_idle_capital : true);
+            const btn = document.getElementById('btnToggleIdleBorrow');
+            if (btn) btn.innerText = 'Atualizando...';
+            try {
+                const res = await fetch('/api/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allow_scalp_borrow_idle_capital: !cur })
+                });
+                if (res.ok) await fetchStatus();
+            } catch (e) {
+                console.error('Erro ao alternar empréstimo de saldo:', e);
+            }
+        }
+
         function updateCountdown() {
             const now = new Date();
             const min = now.getUTCMinutes();
@@ -1470,12 +1513,36 @@
             const maxRocket = Number(data.max_rocket_positions !== undefined ? data.max_rocket_positions : 1);
             const rocketCount = Number(data.rocket_positions_count !== undefined ? data.rocket_positions_count : openPos.filter(p => (p.mode || '').includes('ROCKET')).length);
 
+            const idleBorrowActive = Boolean(data.allow_scalp_borrow_idle_capital !== undefined ? data.allow_scalp_borrow_idle_capital : true);
             const bScalp = document.getElementById('badgeScalpAllocState');
-            if (bScalp) bScalp.innerText = `${scalpCount}/${maxScalp} VAGA(S) ATIVA(S)`;
+            if (bScalp) {
+                if (idleBorrowActive) {
+                    bScalp.innerText = `${scalpCount}/${maxScalp} FIXAS (ATÉ ${data.max_concurrent_positions || 3} DINÂMICAS)`;
+                } else {
+                    bScalp.innerText = `${scalpCount}/${maxScalp} VAGA(S) ATIVA(S)`;
+                }
+            }
             const bSniper = document.getElementById('badgeSniperAllocState');
             if (bSniper) bSniper.innerText = `${sniperCount}/${maxSniper} VAGA(S) ATIVA(S)`;
             const bRocket = document.getElementById('badgeRocketAllocState');
             if (bRocket) bRocket.innerText = `${rocketCount}/${maxRocket} VAGA(S) ATIVA(S)`;
+
+            const bIdle = document.getElementById('badgeIdleBorrowState');
+            const btnIdle = document.getElementById('btnToggleIdleBorrow');
+            const txtIdle = document.getElementById('btnToggleIdleBorrowText');
+            if (bIdle && btnIdle && txtIdle) {
+                if (idleBorrowActive) {
+                    bIdle.innerText = 'ATIVO (POOLED)';
+                    bIdle.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-900/80 text-emerald-300 border border-emerald-600';
+                    btnIdle.className = 'px-3.5 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-2 transition shadow bg-emerald-500 hover:bg-emerald-400 text-black';
+                    txtIdle.innerText = 'Saldo Parado em Scalp: LIGADO';
+                } else {
+                    bIdle.innerText = 'DESLIGADO';
+                    bIdle.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700';
+                    btnIdle.className = 'px-3.5 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-2 transition shadow bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700';
+                    txtIdle.innerText = 'Saldo Parado em Scalp: DESLIGADO';
+                }
+            }
 
             updateAllocationSummary();
 

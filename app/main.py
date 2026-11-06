@@ -49,6 +49,7 @@ class ToggleRequest(BaseModel):
     max_sniper_positions: Optional[int] = None
     max_scalp_positions: Optional[int] = None
     max_rocket_positions: Optional[int] = None
+    allow_scalp_borrow_idle_capital: Optional[bool] = None
     order_margin_usdt: Optional[float] = None
     scalp_margin_usdt: Optional[float] = None
     rocket_margin_usdt: Optional[float] = None
@@ -113,6 +114,8 @@ class SniperRuntimeState:
         self.scalp_sl_pct: float = float(os.getenv("SCALP_SL_PCT", "0.35"))
         self.scalp_target_mode: str = os.getenv("SCALP_TARGET_MODE", "FIXED").upper()
         self.scalp_margin_usdt: float = float(os.getenv("SCALP_MARGIN_USDT", "5.25"))
+        # Pooling / Empréstimo Dinâmico: permite que o Scalp aproveite o saldo e vagas paradas de Sniper/Memes
+        self.allow_scalp_borrow_idle_capital: bool = os.getenv("ALLOW_SCALP_BORROW_IDLE", "true").lower() in ("true", "1", "yes")
         self.orderbook_scalp_auto: bool = False
         self.orderbook_cache: List[Dict[str, Any]] = []
         self.orderbook_last_ts: float = 0.0
@@ -410,6 +413,23 @@ async def run_candle_close_sniper() -> None:
 
         state._dispatched_candles.add(candle_key)
         try:
+            free_usdt = float(state.wallet_balance.get("free_usdt") or 0.0)
+            needed_margin = float(executor.order_margin_usdt)
+            if free_usdt < (needed_margin * 0.95):
+                # Se o saldo estiver tomado por um scalp, recicla o scalp no lucro para dar prioridade ao Sniper
+                scalp_to_recycle = next(
+                    (p for p in state.open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP") and float(p.get("unrealized_pnl", 0.0)) >= 0.0),
+                    None
+                )
+                if scalp_to_recycle:
+                    state.append_log(
+                        "CAPITAL_PRIORITY_RECYCLE",
+                        f"Reciclando scalp {scalp_to_recycle['symbol']} no lucro para liberar margem para o disparo Sniper de {sym} [{tf}]!",
+                    )
+                    await executor.close_position(scalp_to_recycle["symbol"], reason="PRIORIDADE_SNIPER")
+                    await asyncio.sleep(0.5)
+                    state.wallet_balance = await executor.get_wallet_balance()
+
             order_receipt = await executor.execute_atomic_order(
                 symbol=sym,
                 direction=sig["direction"],
@@ -643,6 +663,7 @@ async def get_status() -> Dict[str, Any]:
         "scalp_sl_pct": state.scalp_sl_pct,
         "scalp_target_mode": state.scalp_target_mode,
         "scalp_margin_usdt": state.scalp_margin_usdt,
+        "allow_scalp_borrow_idle_capital": state.allow_scalp_borrow_idle_capital,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "max_hold_minutes": executor.max_hold_minutes,
         "scalp_rotation_enabled": executor.scalp_rotation_enabled,
@@ -918,6 +939,10 @@ async def toggle_bot(
             state.orderbook_scalp_auto = bool(payload.orderbook_scalp_auto)
             changes.append(f"AutoScalpBook={'ON' if state.orderbook_scalp_auto else 'OFF'}")
 
+        if payload.allow_scalp_borrow_idle_capital is not None:
+            state.allow_scalp_borrow_idle_capital = bool(payload.allow_scalp_borrow_idle_capital)
+            changes.append(f"EmprestarSaldoParado={'ON' if state.allow_scalp_borrow_idle_capital else 'OFF'}")
+
         if payload.proxy_url is not None:
             executor.proxy_url = payload.proxy_url.strip()
             changes.append("Proxy atualizado")
@@ -988,6 +1013,7 @@ async def toggle_bot(
         "lookback_days": state.lookback_days,
         "timeframe_filter": state.timeframe_filter,
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "allow_scalp_borrow_idle_capital": state.allow_scalp_borrow_idle_capital,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "scalp_rotation_enabled": executor.scalp_rotation_enabled,
         "scalp_rotation_min_pnl": executor.scalp_rotation_min_pnl,
@@ -1128,6 +1154,7 @@ async def update_scalp_config(req: ScalpConfigRequest) -> Dict[str, Any]:
         "scalp_target_mode": state.scalp_target_mode,
         "scalp_margin_usdt": state.scalp_margin_usdt,
         "orderbook_scalp_auto": state.orderbook_scalp_auto,
+        "allow_scalp_borrow_idle_capital": state.allow_scalp_borrow_idle_capital,
         "auto_momentum_exit": executor.auto_momentum_exit,
         "max_hold_minutes": executor.max_hold_minutes,
         "scalp_rotation_enabled": executor.scalp_rotation_enabled,
@@ -1178,15 +1205,42 @@ async def close_all_open_positions() -> Dict[str, Any]:
 
 @app.post("/api/orderbook-scalp/execute")
 async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
-    """Dispara uma ordem atômica de Scalp baseada nas paredes de liquidez do Livro de Ofertas."""
+    """
+    Dispara uma ordem atômica de Scalp baseada nas paredes de liquidez do Livro de Ofertas.
+    Suporta Empréstimo Dinâmico de Capital Parado: se as vagas dedicadas de Scalp estiverem cheias,
+    mas houver vagas ociosas do portfólio (Sniper/Memes sem posição) e saldo livre na Binance,
+    o robô permite usar o dinheiro parado para executar a oportunidade!
+    """
     open_positions = await executor.get_open_positions()
     state.open_positions = open_positions
+    state.wallet_balance = await executor.get_wallet_balance()
+
     scalp_positions = [p for p in open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]
+    total_positions = len(open_positions)
+    free_usdt = float(state.wallet_balance.get("free_usdt") or 0.0)
+
+    is_borrowed_slot = False
     if len(scalp_positions) >= state.max_scalp_positions:
-        return {
-            "status": "blocked",
-            "message": f"Limite de vagas dedicadas de Scalp atingido ({len(scalp_positions)}/{state.max_scalp_positions}).",
-        }
+        if not state.allow_scalp_borrow_idle_capital:
+            return {
+                "status": "blocked",
+                "message": f"Limite de vagas dedicadas de Scalp atingido ({len(scalp_positions)}/{state.max_scalp_positions}). Ative 'Usar Saldo Parado' para emprestar vagas ociosas.",
+            }
+
+        # Verifica se o portfólio global já atingiu o limite de vagas
+        if total_positions >= state.max_concurrent_positions:
+            return {
+                "status": "blocked",
+                "message": f"Todas as {state.max_concurrent_positions} vagas da carteira estão ocupadas ({len(scalp_positions)} Scalps, {total_positions - len(scalp_positions)} Trades). Aguarde a finalização de uma operação.",
+            }
+
+        if free_usdt < (state.scalp_margin_usdt * 0.95):
+            return {
+                "status": "blocked",
+                "message": f"Saldo livre insuficiente na Binance (${free_usdt:.2f} USDT livre; necessário ${state.scalp_margin_usdt:.2f} USDT).",
+            }
+
+        is_borrowed_slot = True
 
     order_receipt = await executor.execute_atomic_order(
         symbol=req.symbol,
@@ -1197,14 +1251,14 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
         margin_usdt=state.scalp_margin_usdt,
         mode="SCALP_BOOK",
         timeframe="BOOK-L2",
-        strategy_name=f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%)",
+        strategy_name=f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%){' [POOLING]' if is_borrowed_slot else ''}",
         horizon="Minutos (~1 a 12m)",
     )
     trade_record = {
         "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "symbol": req.symbol,
         "timeframe": "BOOK-L2",
-        "strategy_name": f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%)",
+        "strategy_name": f"Order Book Scalp ({state.scalp_target_mode} +{state.scalp_tp_pct:.2f}%){' [POOLING]' if is_borrowed_slot else ''}",
         "direction": "LONG",
         "entry_price": order_receipt["entry_price"],
         "stop_price": order_receipt["stop_price"],
@@ -1213,27 +1267,30 @@ async def execute_orderbook_scalp(req: ScalpExecuteRequest) -> Dict[str, Any]:
         "leverage": order_receipt["leverage"],
         "notional_usdt": order_receipt["notional_usdt"],
         "entry_order_id": order_receipt["entry_order_id"],
+        "borrowed_idle_capital": is_borrowed_slot,
     }
     state.trades_history.appendleft(trade_record)
+
+    log_tag = "SCALP_IDLE_BORROW_FIRED" if is_borrowed_slot else "ATOMIC_ORDER_FIRED"
+    borrow_note = " • (Vaga Emprestada do Saldo Parado!)" if is_borrowed_slot else ""
     state.append_log(
-        "ATOMIC_ORDER_FIRED",
-        f"SCALP LIVRO DE OFERTAS DISPARADO: {req.symbol} [BOOK-L2] LONG (${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | SL: {order_receipt['stop_price']} | TP: {order_receipt['take_profit_price']}",
-        {"order_receipt": order_receipt},
+        log_tag,
+        f"SCALP LIVRO DE OFERTAS DISPARADO{borrow_note}: {req.symbol} [BOOK-L2] LONG (${order_receipt['notional_usdt']} @ {order_receipt['entry_price']}) | SL: {order_receipt['stop_price']} | TP: {order_receipt['take_profit_price']}",
+        {"order_receipt": order_receipt, "borrowed_idle_capital": is_borrowed_slot},
     )
     state.open_positions = await executor.get_open_positions()
     state.wallet_balance = await executor.get_wallet_balance()
-    return {"status": "ok", "order_receipt": order_receipt}
+    return {"status": "ok", "order_receipt": order_receipt, "borrowed_idle_capital": is_borrowed_slot}
 
 
 async def check_auto_scalp_and_rotation() -> None:
     """
     Avalia a execução automática do Scalp e a Rotação Ativa de Capital:
-    1. Se houver vagas livres (slots > 0): dispara na melhor oportunidade qualificada.
-    2. Se as vagas estiverem cheias (slots == 0) e a Rotação Ativa estiver ON:
-       - Detecta se há uma candidata explosiva no radar (Score >= 78, Demanda >= 60%, Taker >= 53%).
-       - Avalia as posições abertas: só permite rotacionar uma posição se ela já tiver coberto
-         todas as taxas da corretora (PnL >= +0.22%), tiver mais de 2 minutos de vida e momento estagnado.
-       - Fecha a posição estagnada no verde e gira imediatamente o capital para a nova oportunidade!
+    1. Se houver vagas livres dedicadas ou vagas ociosas emprestadas do saldo parado:
+       dispara na melhor oportunidade qualificada (Antecipação no Fundo ou Demanda Dominante).
+    2. Se as vagas estiverem cheias e a Rotação Ativa estiver ON:
+       - Detecta se há uma candidata explosiva no radar.
+       - Só rotaciona se a posição atual já cobriu todas as taxas (PnL >= +0.22%) e momento estagnou.
     """
     if not (state.enabled and state.orderbook_scalp_auto and state.orderbook_cache):
         return
@@ -1241,16 +1298,35 @@ async def check_auto_scalp_and_rotation() -> None:
     open_positions = state.open_positions
     open_syms = {p["symbol"] for p in open_positions}
     scalp_positions = [p for p in open_positions if p.get("mode") in ("SCALP_BOOK", "SCALP")]
-    slots = max(0, state.max_scalp_positions - len(scalp_positions))
+    dedicated_slots = max(0, state.max_scalp_positions - len(scalp_positions))
 
-    if slots > 0:
+    total_open = len(open_positions)
+    portfolio_idle_slots = max(0, state.max_concurrent_positions - total_open)
+    free_usdt = float(state.wallet_balance.get("free_usdt") or 0.0)
+
+    # Determina vagas disponíveis para Scalp (Dedicadas + Empréstimo de Saldo Parado)
+    if dedicated_slots > 0:
+        available_slots = dedicated_slots
+    elif state.allow_scalp_borrow_idle_capital and portfolio_idle_slots > 0 and free_usdt >= (state.scalp_margin_usdt * 0.95):
+        available_slots = portfolio_idle_slots
+    else:
+        available_slots = 0
+
+    if available_slots > 0:
         for item in state.orderbook_cache:
-            if (
+            if item.get("symbol") in open_syms:
+                continue
+
+            # Qualifica se tem sinal de Antecipação no Suporte OU Demanda Dominante
+            is_promising = bool(
                 item.get("signal_ready")
-                and item.get("buy_pressure_pct", 0) >= 62.0
-                and item.get("taker_buy_pct", 0) >= 54.0
-                and item["symbol"] not in open_syms
-            ):
+                and (
+                    item.get("is_anticipation")
+                    or (item.get("buy_pressure_pct", 0) >= 59.0 and item.get("taker_buy_pct", 0) >= 52.0)
+                )
+            )
+
+            if is_promising:
                 await execute_orderbook_scalp(
                     ScalpExecuteRequest(
                         symbol=item["symbol"],

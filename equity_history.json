@@ -98,5 +98,35 @@
     "sniper_pnl": 0.0,
     "rocket_pnl": 0.0,
     "last_event": "Compra UNI/USDT [LONG @ 6.9630]"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:23:48 UTC",
+    "timestamp_ts": 1793931828.9165242,
+    "time_label": "02:23",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Venda UNI/USDT (MOMENTO_PASSOU_TOPO (Pico +0.36% -> Protegido em +0.20%)): +0.01$ (+0.22%)"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:24:30 UTC",
+    "timestamp_ts": 1793931870.5068586,
+    "time_label": "02:24",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra UNI/USDT [LONG @ 6.9880]"
+  },
+  {
+    "timestamp_utc": "2026-11-06 02:24:30 UTC",
+    "timestamp_ts": 1793931870.9313362,
+    "time_label": "02:24",
+    "total_usdt": 18.51,
+    "scalp_pnl": 0.0,
+    "sniper_pnl": 0.0,
+    "rocket_pnl": 0.0,
+    "last_event": "Compra BTC/USDT [LONG @ 76296.0700]"
   }
 ]
